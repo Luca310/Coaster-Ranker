@@ -817,8 +817,18 @@
         }
 
         function getRandomCoasters() {
-            const shuffled = [...coasters].sort(() => 0.5 - Math.random());
-            return [shuffled[0], shuffled[1]];
+        const length = coasters.length;
+
+        // Get first random index
+        const index1 = Math.floor(Math.random() * length);
+
+        // Get second random index, ensuring it's different
+        let index2;
+        do {
+            index2 = Math.floor(Math.random() * length);
+        } while (index2 === index1);
+
+        return [coasters[index1], coasters[index2]];
         }
 
         function calculateElo(winnerElo, loserElo, K = 32) {
