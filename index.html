@@ -237,7 +237,6 @@
         .tab-content {
             display: none;
             padding: 40px;
-            padding-top: 0px;
             min-height: 500px;
         }
 
@@ -280,7 +279,34 @@
         }
 
         .coaster-card.winner {
-            animation: winPulse 0.5s;
+            animation: winShine 1.5s ease-out;
+            transform: scale(1.08);
+            box-shadow: 0 20px 40px rgba(16, 185, 129, 0.4);
+            transition: transform 0.5s ease-out;
+        }
+
+        .coaster-card.loser {
+            transform: scale(0.92);
+            opacity: 0.7;
+            transition: all 0.5s ease;
+        }
+
+        @keyframes winShine {
+            0% {
+                box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            }
+            20% {
+                box-shadow: 0 0 30px 10px rgba(255, 215, 0, 0.8),
+                            0 0 50px 20px rgba(255, 215, 0, 0.4),
+                            0 20px 40px rgba(16, 185, 129, 0.4);
+            }
+            40% {
+                box-shadow: 0 0 20px 5px rgba(255, 215, 0, 0.6),
+                            0 20px 40px rgba(16, 185, 129, 0.4);
+            }
+            100% {
+                box-shadow: 0 20px 40px rgba(16, 185, 129, 0.4);
+            }
         }
 
         /*
@@ -320,6 +346,79 @@
         @keyframes winPulse {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.05); }
+        }
+
+        /* Rank climb animation */
+        .rank-change-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 1.1em;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            animation: badgePopIn 0.4s ease-out, badgeFadeOut 0.5s ease-in 3.5s forwards;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+            z-index: 10;
+        }
+
+        .rank-change-badge .arrow {
+            font-size: 1.3em;
+            animation: arrowBounce 0.6s ease-in-out infinite;
+        }
+
+        .rank-change-badge .confetti {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            font-size: 1.2em;
+            animation: confettiPop 0.6s ease-out;
+        }
+
+        @keyframes badgePopIn {
+            0% { 
+                transform: scale(0) rotate(-180deg);
+                opacity: 0;
+            }
+            60% {
+                transform: scale(1.2) rotate(10deg);
+            }
+            100% { 
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+        }
+
+        @keyframes badgeFadeOut {
+            to { 
+                opacity: 0;
+                transform: translateY(-20px) scale(0.8);
+            }
+        }
+
+        @keyframes arrowBounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        @keyframes confettiPop {
+            0% {
+                transform: scale(0) rotate(0deg);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.5) rotate(180deg);
+                opacity: 1;
+            }
+            100% {
+                transform: scale(1) rotate(360deg) translateY(-30px);
+                opacity: 0;
+            }
         }
 
         .coaster-name {
@@ -483,6 +582,64 @@
             font-size: 1.1em;
         }
 
+        .clickable-stat {
+            cursor: pointer;
+            color: #4CA1AF;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .clickable-stat:hover {
+            color: #2C3E50;
+            text-decoration: underline;
+        }
+
+        .autocomplete-container {
+            position: relative;
+            display: inline-block;
+            max-width: 360px;
+            width: 100%;
+        }
+
+        .autocomplete-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            max-height: 300px;
+            overflow-y: auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            display: none;
+        }
+
+        .autocomplete-dropdown.show {
+            display: block;
+        }
+
+        .autocomplete-item {
+            padding: 10px 15px;
+            cursor: pointer;
+            transition: background 0.2s;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .autocomplete-item:last-child {
+            border-bottom: none;
+        }
+
+        .autocomplete-item:hover {
+            background: #f5f7fa;
+        }
+
+        .autocomplete-item.selected {
+            background: #e8f4f8;
+        }
+
         .no-battles {
             text-align: center;
             padding: 60px;
@@ -522,6 +679,22 @@
         .history-delete:hover {
             color: #d00;
             background: rgba(0,0,0,0.03);
+        }
+
+        .history-switch {
+            background: transparent;
+            border: none;
+            color: #4CA1AF;
+            font-size: 1.05em;
+            cursor: pointer;
+            padding: 6px;
+            border-radius: 6px;
+            margin-right: 4px;
+        }
+
+        .history-switch:hover {
+            color: #2C3E50;
+            background: rgba(76, 161, 175, 0.1);
         }
 
         .history-pair {
@@ -690,33 +863,33 @@
             <button class="tab" onclick="switchTab('history')">📜 History</button>
         </div>
 
-        <div class="pairing-controls-wrapper" style="margin:12px 0;">
-            <div style="display:flex;justify-content:center;align-items:center;">
-                <div style="font-size:0.95em;color:#444;display:flex;align-items:center;gap:8px;"></div>
-                <button id="pairingControlsToggle" class="pairing-toggle-btn" onclick="togglePairingControls()" aria-expanded="true" title="Verberg instellingen" style="margin-left:8px;padding:6px 8px;border-radius:8px;border:none;background:#fff;cursor:pointer;font-weight:700;">▾</button>
-            </div>
-
-            <div id="pairingControls" class="pairing-controls" style="display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:8px;transition:max-height 260ms ease,opacity 180ms ease;overflow:hidden;">
-                <div class="pair-toggle" style="display:flex;border:1px solid #ddd;border-radius:10px;overflow:hidden;">
-                    <button class="pair-option" data-value="hybrid" data-help="kiest eerst een onderbemonsterde achtbaan, daarna een tegenstander met vergelijkbare ELO (balanceert verkenning en verfijning)" onclick="setPairingStrategy('hybrid')">
-                        Hybrid
-                    </button>
-                    <button class="pair-option" data-value="exploration" data-help="beide keuzes geven prioriteit aan onderbemonsterde achtbanen (sneller coverage)" onclick="setPairingStrategy('exploration')">
-                        Exploration
-                    </button>
-                    <button class="pair-option" data-value="uniform" data-help="volledig willekeurig (geen bias)" onclick="setPairingStrategy('uniform')">
-                        Uniform
-                    </button>
-                </div>
-
-                <div style="display:flex;align-items:center;gap:8px;font-size:0.95em;color:#444;">
-                    ELO-proximity:
-                    <input id="eloProximityRange" type="range" min="0" max="4" step="0.1" value="1" oninput="setEloProximityPower(this.value)" style="width:180px;">
-                    <span id="eloProximityValue" style="min-width:36px;text-align:center;font-weight:700;color:#2c3e50;">1.0</span>
-                </div>
-            </div>
-        </div>
         <div id="battle-tab" class="tab-content active">
+            <div class="pairing-controls-wrapper" style="margin:12px 0;">
+                <div style="display:flex;justify-content:center;align-items:center;">
+                    <div style="font-size:0.95em;color:#444;display:flex;align-items:center;gap:8px;"></div>
+                    <button id="pairingControlsToggle" class="pairing-toggle-btn" onclick="togglePairingControls()" aria-expanded="true" title="Verberg instellingen" style="margin-left:8px;padding:6px 8px;border-radius:8px;border:none;background:#fff;cursor:pointer;font-weight:700;">▾</button>
+                </div>
+
+                <div id="pairingControls" class="pairing-controls" style="display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:8px;transition:max-height 260ms ease,opacity 180ms ease;overflow:hidden;">
+                    <div class="pair-toggle" style="display:flex;border:1px solid #ddd;border-radius:10px;overflow:hidden;">
+                        <button class="pair-option" data-value="hybrid" data-help="kiest eerst een onderbemonsterde achtbaan, daarna een tegenstander met vergelijkbare ELO (balanceert verkenning en verfijning)" onclick="setPairingStrategy('hybrid')">
+                            Hybrid
+                        </button>
+                        <button class="pair-option" data-value="exploration" data-help="beide keuzes geven prioriteit aan onderbemonsterde achtbanen (sneller coverage)" onclick="setPairingStrategy('exploration')">
+                            Exploration
+                        </button>
+                        <button class="pair-option" data-value="uniform" data-help="volledig willekeurig (geen bias)" onclick="setPairingStrategy('uniform')">
+                            Uniform
+                        </button>
+                    </div>
+
+                    <div style="display:flex;align-items:center;gap:8px;font-size:0.95em;color:#444;">
+                        ELO-proximity:
+                        <input id="eloProximityRange" type="range" min="0" max="4" step="0.1" value="1" oninput="setEloProximityPower(this.value)" style="width:180px;">
+                        <span id="eloProximityValue" style="min-width:36px;text-align:center;font-weight:700;color:#2c3e50;">1.0</span>
+                    </div>
+                </div>
+            </div>
             <div class="vs-divider">VS</div>
             <div class="battle-area">
                 <div class="battle-container" id="battleContainer">
@@ -728,7 +901,10 @@
         
         <div id="history-tab" class="tab-content">
             <div style="display:flex;justify-content:center;align-items:center;margin-bottom:16px; gap:10px;">
-                <input id="historySearch" type="text" class="search-box" placeholder="🔍 Zoek matchup..." oninput="displayHistory()" style="max-width:360px;" />
+                <div class="autocomplete-container">
+                    <input id="historySearch" type="text" class="search-box" placeholder="🔍 Zoek matchup..." oninput="handleHistorySearchInput()" onkeydown="handleHistorySearchKeydown(event)" onfocus="showHistoryAutocomplete()" style="width:100%;" />
+                    <div id="historyAutocomplete" class="autocomplete-dropdown"></div>
+                </div>
             </div>
             <div id="historyContainer" style="overflow:auto; max-height:420px;">
                 <div class="no-battles">Nog geen battles — start met kiezen om history op te bouwen.</div>
@@ -1526,10 +1702,25 @@
             currentBattle = getRandomCoasters();
             const battleContainer = document.getElementById('battleContainer');
             
+            // Get current rankings for both coasters
+            const getRanking = (coasterName) => {
+                const statsArray = Object.values(coasterStats);
+                const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
+                const rank = sorted.findIndex(c => c.name === coasterName) + 1;
+                return rank;
+            };
+            
+            const rank1 = getRanking(currentBattle[0].naam);
+            const rank2 = getRanking(currentBattle[1].naam);
+            
             battleContainer.innerHTML = `
                 <div class="coaster-card left-card" onclick="chooseWinner(0)">
                     <div class="coaster-name">${currentBattle[0].naam}</div>
                     <div class="coaster-info">
+                        <div class="coaster-info-row">
+                            <span class="info-label">📊 Ranking:</span>
+                            <span class="info-value">#${rank1}</span>
+                        </div>
                         <div class="coaster-info-row">
                             <span class="info-label">🎢 Park:</span>
                             <span class="info-value">${currentBattle[0].park}</span>
@@ -1544,6 +1735,10 @@
                 <div class="coaster-card right-card" onclick="chooseWinner(1)">
                     <div class="coaster-name">${currentBattle[1].naam}</div>
                     <div class="coaster-info">
+                        <div class="coaster-info-row">
+                            <span class="info-label">📊 Ranking:</span>
+                            <span class="info-value">#${rank2}</span>
+                        </div>
                         <div class="coaster-info-row">
                             <span class="info-label">🎢 Park:</span>
                             <span class="info-value">${currentBattle[1].park}</span>
@@ -1563,6 +1758,16 @@
             const winner = currentBattle[index];
             const loser = currentBattle[1 - index];
             
+            // Get ranking BEFORE the battle
+            const getRanking = (coasterName) => {
+                const statsArray = Object.values(coasterStats);
+                const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
+                const rank = sorted.findIndex(c => c.name === coasterName) + 1;
+                return rank;
+            };
+            
+            const oldRank = getRanking(winner.naam);
+            
             // Get current ELO ratings
             const winnerStats = coasterStats[winner.naam];
             const loserStats = coasterStats[loser.naam];
@@ -1581,6 +1786,10 @@
             
             totalBattlesCount++;
             
+            // Get ranking AFTER the battle
+            const newRank = getRanking(winner.naam);
+            const rankChange = oldRank - newRank; // positive = climbed
+            
             // record to history before saving
             recordBattle(winner, loser, winner.naam, loser.naam);
 
@@ -1590,11 +1799,32 @@
             // Visual feedback
             const cards = document.querySelectorAll('.coaster-card');
             cards[index].classList.add('winner');
+            cards[1 - index].classList.add('loser');
             
-            // Load next battle after short delay
+            // Show rank climb animation if winner climbed in ranking
+            if (rankChange > 0) {
+                const badge = document.createElement('div');
+                badge.className = 'rank-change-badge';
+                badge.innerHTML = `
+                    <span class="confetti">🎉</span>
+                    <span class="arrow">↑</span>
+                    <span>+${rankChange}</span>
+                `;
+                cards[index].style.position = 'relative';
+                cards[index].appendChild(badge);
+                
+                // Remove badge after animation completes
+                setTimeout(() => {
+                    if (badge.parentElement) {
+                        badge.remove();
+                    }
+                }, 4000);
+            }
+            
+            // Load next battle after longer delay to show animations
             setTimeout(() => {
                 displayBattle();
-            }, 500);
+            }, 1500);
         }
 
         // Keyboard controls
@@ -1684,13 +1914,24 @@
             // Render only pair, highlight winner with a green pill and add a subtle delete button
             const rows = coasterHistory.slice().reverse().map((entry, idx) => {
                 const originalIndex = coasterHistory.length - 1 - idx;
-                const a = entry.a;
-                const b = entry.b;
+                let a = entry.a;
+                let b = entry.b;
                 const winner = entry.winner;
 
                 const pairText = `${a} ↔ ${b}`;
                 if (query && !pairText.toLowerCase().includes(query) && !a.toLowerCase().includes(query) && !b.toLowerCase().includes(query)) {
                     return '';
+                }
+
+                // If there's a search query, put the matching coaster on the left
+                if (query) {
+                    const aMatches = a.toLowerCase().includes(query);
+                    const bMatches = b.toLowerCase().includes(query);
+                    
+                    // If only b matches, swap them
+                    if (!aMatches && bMatches) {
+                        [a, b] = [b, a];
+                    }
                 }
 
                 const aHtml = (winner === a) ? `<span class="winner-pill">${escapeHtml(a)}</span>` : escapeHtml(a);
@@ -1699,7 +1940,10 @@
                 return `
                     <div class="history-row">
                         <div class="history-pair"><strong>${aHtml} &nbsp;↔&nbsp; ${bHtml}</strong></div>
-                        <div style="flex:0 0 auto;"><button class="history-delete" title="Verwijder deze matchup" onclick="deleteHistoryEntry(${originalIndex})">✖</button></div>
+                        <div style="flex:0 0 auto;">
+                            <button class="history-switch" title="Wissel winnaar" onclick="switchHistoryWinner(${originalIndex})">⇄</button>
+                            <button class="history-delete" title="Verwijder deze matchup" onclick="deleteHistoryEntry(${originalIndex})">✖</button>
+                        </div>
                     </div>
                 `;
             }).join('');
@@ -1711,6 +1955,92 @@
                 container.innerHTML = rows;
             }
         }
+
+        let selectedAutocompleteIndex = -1;
+
+        function getHistoryAutocompleteSuggestions() {
+            const coasterNames = new Set();
+            Object.keys(coasterStats).forEach(name => coasterNames.add(name));
+            return Array.from(coasterNames).sort();
+        }
+
+        function handleHistorySearchInput() {
+            showHistoryAutocomplete();
+        }
+
+        function showHistoryAutocomplete() {
+            const input = document.getElementById('historySearch');
+            const dropdown = document.getElementById('historyAutocomplete');
+            const query = input.value.trim().toLowerCase();
+            
+            const allSuggestions = getHistoryAutocompleteSuggestions();
+            const filteredSuggestions = query === '' 
+                ? allSuggestions 
+                : allSuggestions.filter(name => name.toLowerCase().includes(query));
+            
+            if (filteredSuggestions.length === 0) {
+                dropdown.classList.remove('show');
+                return;
+            }
+            
+            dropdown.innerHTML = filteredSuggestions.map((name, idx) => 
+                `<div class="autocomplete-item" data-index="${idx}" onclick="selectHistorySuggestion('${name.replace(/'/g, "\\'")}')">${escapeHtml(name)}</div>`
+            ).join('');
+            
+            dropdown.classList.add('show');
+            selectedAutocompleteIndex = -1;
+        }
+
+        function selectHistorySuggestion(name) {
+            const input = document.getElementById('historySearch');
+            input.value = name;
+            document.getElementById('historyAutocomplete').classList.remove('show');
+            displayHistory();
+        }
+
+        function handleHistorySearchKeydown(event) {
+            const dropdown = document.getElementById('historyAutocomplete');
+            const items = dropdown.querySelectorAll('.autocomplete-item');
+            
+            if (!dropdown.classList.contains('show') || items.length === 0) return;
+            
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                selectedAutocompleteIndex = Math.min(selectedAutocompleteIndex + 1, items.length - 1);
+                updateAutocompleteSelection(items);
+            } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                selectedAutocompleteIndex = Math.max(selectedAutocompleteIndex - 1, -1);
+                updateAutocompleteSelection(items);
+            } else if (event.key === 'Enter') {
+                event.preventDefault();
+                if (selectedAutocompleteIndex >= 0 && selectedAutocompleteIndex < items.length) {
+                    items[selectedAutocompleteIndex].click();
+                }
+            } else if (event.key === 'Escape') {
+                dropdown.classList.remove('show');
+            }
+        }
+
+        function updateAutocompleteSelection(items) {
+            items.forEach((item, idx) => {
+                if (idx === selectedAutocompleteIndex) {
+                    item.classList.add('selected');
+                    item.scrollIntoView({ block: 'nearest' });
+                } else {
+                    item.classList.remove('selected');
+                }
+            });
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (event) => {
+            const dropdown = document.getElementById('historyAutocomplete');
+            const input = document.getElementById('historySearch');
+            if (dropdown && input && !input.contains(event.target) && !dropdown.contains(event.target)) {
+                dropdown.classList.remove('show');
+            }
+        });
 
         // delete a single history entry by its index in coasterHistory
         function deleteHistoryEntry(index) {
@@ -1732,6 +2062,45 @@
             try {
                 showToast(`Verwijderd: ${removed.a} ↔ ${removed.b}`);
             } catch (e) {}
+        }
+
+        // switch the winner in a history entry
+        function switchHistoryWinner(index) {
+            if (typeof index !== 'number' || index < 0 || index >= coasterHistory.length) return;
+
+            const entry = coasterHistory[index];
+            const oldWinner = entry.winner;
+            const newWinner = (entry.winner === entry.a) ? entry.b : entry.a;
+            const oldLoser = (entry.winner === entry.a) ? entry.b : entry.a;
+            
+            // Update the winner in the history entry
+            entry.winner = newWinner;
+            
+            // Update ELO ratings by reversing the previous outcome
+            // First, reverse the old result
+            const winnerStats = coasterStats[oldWinner];
+            const loserStats = coasterStats[oldLoser];
+            
+            if (winnerStats && loserStats) {
+                // Reverse old outcome
+                winnerStats.wins--;
+                loserStats.losses--;
+                
+                // Apply new outcome
+                loserStats.wins++;
+                winnerStats.losses++;
+                
+                // Recalculate ELO (swap who won)
+                const { newWinnerElo, newLoserElo } = calculateElo(loserStats.elo, winnerStats.elo);
+                loserStats.elo = newWinnerElo;
+                winnerStats.elo = newLoserElo;
+            }
+            
+            saveData();
+            displayHistory();
+            updateRanking();
+            
+            showToast(`Winnaar gewisseld: ${newWinner} wint nu van ${oldLoser}`);
         }
 
         // small helper to escape HTML in names
@@ -1887,6 +2256,7 @@
                 const rank = index + 1;
                 const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '';
                 const winrate = coaster.battles > 0 ? ((coaster.wins / coaster.battles) * 100).toFixed(1) : '0.0';
+                const escapedName = coaster.name.replace(/'/g, "\\'");
                 
                 return `
                     <tr>
@@ -1895,9 +2265,9 @@
                         <td>${coaster.park}</td>
                         <td>${coaster.manufacturer}</td>
                         <td><span class="elo-score">${Math.round(coaster.elo)}</span></td>
-                        <td>${coaster.battles}</td>
-                        <td>${coaster.wins}</td>
-                        <td>${coaster.losses}</td>
+                        <td><span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.battles}</span></td>
+                        <td><span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.wins}</span></td>
+                        <td><span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.losses}</span></td>
                         <td>${winrate}%</td>
                     </tr>
                 `;
@@ -1912,6 +2282,18 @@
                 const text = row.textContent.toLowerCase();
                 row.style.display = text.includes(searchTerm) ? '' : 'none';
             });
+        }
+
+        function viewCoasterHistory(coasterName) {
+            // Switch to history tab
+            switchTab('history');
+            
+            // Set the search box value to the coaster name
+            const historySearch = document.getElementById('historySearch');
+            historySearch.value = coasterName;
+            
+            // Trigger the search/filter
+            displayHistory();
         }
 
         function resetRankings() {
