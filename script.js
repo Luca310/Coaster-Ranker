@@ -243,7 +243,7 @@ window.addEventListener('resize', onResize, { passive: true });
     let deletedHistoryStack = [];
     const MAX_UNDO_STACK = 50;
     // Exploration boost: favor coasters with few battles
-    const EXPLORATION_POWER = 1; // higher => stronger preference for low-battles
+    let EXPLORATION_POWER = 2; // higher => stronger preference for low-battles
     // Automatic ELO tuning parameters (internal, no UI required)
     const ELO_BASE = 1500;
     const K0 = 64;           // initial K scale
@@ -251,13 +251,11 @@ window.addEventListener('resize', onResize, { passive: true });
     const K_MIN = 8;         // minimum K to keep movement
     const PRIOR_WEIGHT = 6;  // pseudo-battles pulling displayed ELO toward mean
     // ELO-proximity: prefer opponents whose ELO is similar (more informative matches)
-    let ELO_PROXIMITY_POWER = 1; // higher => stronger preference for similar ELO
+    let ELO_PROXIMITY_POWER = 0.1; // higher => stronger preference for similar ELO
     const ELO_DIFF_SCALE = 400; // scale (in ELO points) used to normalize differences
-    // Pairing strategy: 'hybrid' recommended — picks one under-sampled coaster
+    // Pairing strategy: hybrid — picks one under-sampled coaster
     // then picks a second that is ELO-similar while still favoring under-sampled ones.
-    // Other options: 'exploration' (both chosen by exploration weight), 'uniform'.
-    let PAIRING_STRATEGY = 'hybrid';
-    let pairingControlsHidden = false;
+    let pairingControlsHidden = true;
     // Track all completed pairs to prevent duplicates
     let completedPairs = new Set();
 
@@ -348,7 +346,7 @@ const DOM = {};
         // persist pairing settings per-user
         try {
             const settingsKey = `pairingSettings_${currentUser}`;
-            const settings = { pairingStrategy: PAIRING_STRATEGY, eloProximityPower: ELO_PROXIMITY_POWER, pairingControlsHidden: pairingControlsHidden };
+            const settings = { explorationPower: EXPLORATION_POWER, eloProximityPower: ELO_PROXIMITY_POWER, pairingControlsHidden: pairingControlsHidden };
             localStorage.setItem(settingsKey, JSON.stringify(settings));
         } catch (e) {
             // ignore
@@ -363,19 +361,12 @@ const DOM = {};
             const raw = localStorage.getItem(settingsKey);
             if (!raw) return applySettingsToUI();
             const s = JSON.parse(raw);
-            if (s && typeof s.pairingStrategy === 'string') PAIRING_STRATEGY = s.pairingStrategy;
+            if (s && typeof s.explorationPower === 'number') EXPLORATION_POWER = s.explorationPower;
             if (s && typeof s.eloProximityPower === 'number') ELO_PROXIMITY_POWER = s.eloProximityPower;
             if (s && typeof s.pairingControlsHidden === 'boolean') pairingControlsHidden = s.pairingControlsHidden;
         } catch (e) {
             // ignore
         }
-        applySettingsToUI();
-    }
-
-    function setPairingStrategy(val) {
-        if (!val) return;
-        PAIRING_STRATEGY = val;
-        saveData();
         applySettingsToUI();
     }
 
@@ -388,16 +379,23 @@ const DOM = {};
         saveData();
     }
 
+    function setExplorationPower(val) {
+        const num = Number(val);
+        if (isNaN(num)) return;
+        EXPLORATION_POWER = num;
+        const el = document.getElementById('explorationPowerValue');
+        if (el) el.textContent = num.toFixed(1);
+        saveData();
+    }
+
     function applySettingsToUI() {
-        // update segmented toggle buttons
-        const opts = document.querySelectorAll('.pair-option');
-        opts.forEach(btn => {
-            try {
-                const v = btn.getAttribute('data-value');
-                if (v === PAIRING_STRATEGY) btn.classList.add('active'); else btn.classList.remove('active');
-            } catch (e) {}
-        });
-        // update range and label
+        // update range and label for exploration power
+        const expRange = document.getElementById('explorationPowerRange');
+        const expVal = document.getElementById('explorationPowerValue');
+        if (expRange) expRange.value = EXPLORATION_POWER;
+        if (expVal) expVal.textContent = (Number(EXPLORATION_POWER) || 0).toFixed(1);
+        
+        // update range and label for elo proximity
         const range = document.getElementById('eloProximityRange');
         const val = document.getElementById('eloProximityValue');
         if (range) range.value = ELO_PROXIMITY_POWER;
@@ -490,7 +488,7 @@ const DOM = {};
                     coasterHistory: coasterHistory,
                     completedPairs: [...completedPairs],
                     pairingSettings: {
-                        pairingStrategy: PAIRING_STRATEGY,
+                        explorationPower: EXPLORATION_POWER,
                         eloProximityPower: ELO_PROXIMITY_POWER,
                         pairingControlsHidden: pairingControlsHidden
                     },
@@ -589,7 +587,7 @@ const DOM = {};
                 
                 // Restore settings
                 if (data.pairingSettings) {
-                    if (data.pairingSettings.pairingStrategy) PAIRING_STRATEGY = data.pairingSettings.pairingStrategy;
+                    if (typeof data.pairingSettings.explorationPower === 'number') EXPLORATION_POWER = data.pairingSettings.explorationPower;
                     if (typeof data.pairingSettings.eloProximityPower === 'number') ELO_PROXIMITY_POWER = data.pairingSettings.eloProximityPower;
                     if (typeof data.pairingSettings.pairingControlsHidden === 'boolean') pairingControlsHidden = data.pairingSettings.pairingControlsHidden;
                 }
@@ -782,13 +780,65 @@ const DOM = {};
                     // update stats
                     const winnerStats = ensureCoasterStats(winner);
                     const loserStats = ensureCoasterStats(loser);
-                    const { newWinnerElo, newLoserElo } = calculateEloAdaptiveFromStats(winnerStats, loserStats);
+                    
+                    // Capture data before battle
+                    const winnerEloBefore = winnerStats.elo;
+                    const loserEloBefore = loserStats.elo;
+                    const winnerRankBefore = getCoasterRank(winner.naam);
+                    const loserRankBefore = getCoasterRank(loser.naam);
+                    const winnerBattlesBefore = winnerStats.battles;
+                    const loserBattlesBefore = loserStats.battles;
+                    
+                    const eloOutcome = calculateEloAdaptiveFromStats(winnerStats, loserStats);
+                    const { newWinnerElo, newLoserElo, K } = eloOutcome;
+                    
+                    // Calculate expected probabilities and potential changes
+                    const expectedWinnerProb = 1 / (1 + Math.pow(10, (loserEloBefore - winnerEloBefore) / 400));
+                    const expectedLoserProb = 1 - expectedWinnerProb;
+                    const winnerPotentialGain = newWinnerElo - winnerEloBefore;
+                    const loserPotentialLoss = newLoserElo - loserEloBefore;
+                    const loserIfWinOutcome = calculateEloAdaptiveFromStats(loserStats, winnerStats);
+                    const loserPotentialGain = loserIfWinOutcome.newWinnerElo - loserEloBefore;
+                    const winnerPotentialLoss = loserIfWinOutcome.newLoserElo - winnerEloBefore;
+                    
                     winnerStats.elo = newWinnerElo; winnerStats.battles++; winnerStats.wins++;
                     loserStats.elo = newLoserElo; loserStats.battles++; loserStats.losses++;
                     totalBattlesCount++;
+                    
+                    // Get ranks after battle
+                    const winnerRankAfter = getCoasterRank(winner.naam);
+                    const loserRankAfter = getCoasterRank(loser.naam);
+                    const wasCloseMatch = Math.abs(winnerRankBefore - loserRankBefore) < 3;
+                    
+                    // Build comprehensive battle stats
+                    const battleStats = {
+                        statsA: {
+                            eloBefore: (pair[0].naam === winner.naam) ? winnerEloBefore : loserEloBefore,
+                            eloAfter: (pair[0].naam === winner.naam) ? winnerStats.elo : loserStats.elo,
+                            kFactor: K,
+                            potentialGain: (pair[0].naam === winner.naam) ? winnerPotentialGain : loserPotentialGain,
+                            potentialLoss: (pair[0].naam === winner.naam) ? winnerPotentialLoss : loserPotentialLoss,
+                            rankBefore: (pair[0].naam === winner.naam) ? winnerRankBefore : loserRankBefore,
+                            rankAfter: (pair[0].naam === winner.naam) ? winnerRankAfter : loserRankAfter,
+                            expectedWinProbability: (pair[0].naam === winner.naam) ? expectedWinnerProb : expectedLoserProb,
+                            totalBattlesBefore: (pair[0].naam === winner.naam) ? winnerBattlesBefore : loserBattlesBefore
+                        },
+                        statsB: {
+                            eloBefore: (pair[1].naam === winner.naam) ? winnerEloBefore : loserEloBefore,
+                            eloAfter: (pair[1].naam === winner.naam) ? winnerStats.elo : loserStats.elo,
+                            kFactor: K,
+                            potentialGain: (pair[1].naam === winner.naam) ? winnerPotentialGain : loserPotentialGain,
+                            potentialLoss: (pair[1].naam === winner.naam) ? winnerPotentialLoss : loserPotentialLoss,
+                            rankBefore: (pair[1].naam === winner.naam) ? winnerRankBefore : loserRankBefore,
+                            rankAfter: (pair[1].naam === winner.naam) ? winnerRankAfter : loserRankAfter,
+                            expectedWinProbability: (pair[1].naam === winner.naam) ? expectedWinnerProb : expectedLoserProb,
+                            totalBattlesBefore: (pair[1].naam === winner.naam) ? winnerBattlesBefore : loserBattlesBefore
+                        },
+                        closeFight: wasCloseMatch
+                    };
 
                     // record battle (keeps completedPairs) — skip immediate save to batch at the end
-                    recordBattle(pair[0], pair[1], winner.naam, loser.naam, { skipSave: true });
+                    recordBattle(pair[0], pair[1], winner.naam, loser.naam, { skipSave: true, battleStats });
 
                     simulated++;
                     if (progressCallback && (simulated % 10 === 0)) progressCallback(simulated, count);
@@ -914,78 +964,23 @@ const DOM = {};
         if (ev.key === 'Escape') { closeUserMenu(); closeDevMenu(); }
     });
 
-    // Floating help tooltip logic (delayed show, follows cursor)
-    (function setupFloatingHelp(){
-        const tooltip = document.createElement('div');
-        tooltip.className = 'floating-help';
-        document.body.appendChild(tooltip);
-
-        let showTimer = null;
-        let visible = false;
-
-        function show(text, x, y) {
-            tooltip.textContent = text;
-            tooltip.style.left = x + 'px';
-            tooltip.style.top = (y + 18) + 'px';
-            tooltip.classList.add('show');
-            visible = true;
-        }
-
-        function move(x, y) {
-            tooltip.style.left = x + 'px';
-            tooltip.style.top = (y + 18) + 'px';
-        }
-
-        function hide() {
-            tooltip.classList.remove('show');
-            visible = false;
-            clearTimeout(showTimer);
-            showTimer = null;
-        }
-
-        // attach handlers to pair-option buttons
-        const buttons = document.querySelectorAll('.pair-option');
-        buttons.forEach(btn => {
-            let localTimer = null;
-            const help = btn.getAttribute('data-help') || '';
-
-            const onEnter = (ev) => {
-                // start delayed show (1s)
-                localTimer = setTimeout(() => {
-                    show(help, ev.clientX, ev.clientY);
-                }, 1000);
-                btn._localTimer = localTimer;
-            };
-
-            const onMove = (ev) => {
-                if (visible) move(ev.clientX, ev.clientY);
-            };
-
-            const onLeave = () => {
-                if (btn._localTimer) { clearTimeout(btn._localTimer); btn._localTimer = null; }
-                hide();
-            };
-
-            btn.addEventListener('mouseenter', onEnter);
-            btn.addEventListener('mousemove', onMove);
-            btn.addEventListener('mouseleave', onLeave);
-
-            // also hide on click
-            btn.addEventListener('click', () => { if (btn._localTimer) { clearTimeout(btn._localTimer); btn._localTimer = null; } hide(); });
-        });
-
-        // hide tooltip on scroll or resize
-        window.addEventListener('scroll', hide, { passive: true });
-        window.addEventListener('resize', hide);
-    })();
-
     // utility to make an unordered pair key (same for [A,B] and [B,A])
     function pairKey(nameA, nameB) {
         return [nameA, nameB].sort().join('|||');
     }
 
+    // Helper function to get the rank/position of a coaster by name
+    function getCoasterRank(coasterName) {
+        if (!coasterName || !coasterStats[coasterName]) return null;
+        
+        const statsArray = Object.values(coasterStats);
+        const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
+        
+        return sorted.findIndex(c => c.name === coasterName) + 1;
+    }
+
     // helper: record a battle into history
-    function recordBattle(a, b, winnerName, loserName, { skipSave = false } = {}) {
+    function recordBattle(a, b, winnerName, loserName, { skipSave = false, battleStats = null } = {}) {
         const key = pairKey(a.naam, b.naam);
         const entry = {
             pairKey: key,
@@ -998,6 +993,14 @@ const DOM = {};
             timestamp: new Date().toISOString(),
             seed: (typeof seedNumber !== 'undefined') ? seedNumber : null
         };
+        
+        // Add comprehensive battle stats if provided
+        if (battleStats) {
+            entry.statsA = battleStats.statsA;
+            entry.statsB = battleStats.statsB;
+            entry.closeFight = battleStats.closeFight;
+        }
+        
         coasterHistory.push(entry);
         
         // Mark this pair as completed
@@ -1066,39 +1069,7 @@ const DOM = {};
                     return arr.length - 1;
                 };
 
-                // strategy implementations
-                if (PAIRING_STRATEGY === 'uniform') {
-                    // simple uniform sampling attempts avoiding recent
-                    for (let t = 0; t < attempts; t++) {
-                        const i = Math.floor(randomFn() * length);
-                        let j = Math.floor(randomFn() * length);
-                        if (length > 1) {
-                            let guard = 0;
-                            while (j === i && guard++ < 8) j = Math.floor(randomFn() * length);
-                            if (j === i) j = (i + 1) % length;
-                        }
-                        const a = coasters[i], b = coasters[j];
-                        const key = pairKey(a.naam, b.naam);
-                        if (!recent.has(key)) return [a, b];
-                    }
-                } else if (PAIRING_STRATEGY === 'exploration') {
-                    // both selected from exploration-weighted distribution
-                    const indexFromExploration = () => sampleIndexFromWeights(weights, randomFn);
-                    for (let t = 0; t < attempts; t++) {
-                        const i = indexFromExploration();
-                        let j = indexFromExploration();
-                        if (length > 1) {
-                            let guard = 0;
-                            while (j === i && guard++ < 8) j = indexFromExploration();
-                            if (j === i) j = (i + 1) % length;
-                        }
-                        const a = coasters[i], b = coasters[j];
-                        const key = pairKey(a.naam, b.naam);
-                        if (!completedPairs.has(key)) return [a, b];
-                    }
-                }
-
-                // default/hybrid: pick one under-sampled coaster first, then a second biased by ELO-proximity
+                // Hybrid strategy: pick one under-sampled coaster first, then a second biased by ELO-proximity
                 // (still favors under-sampled ones via base weights)
                 const indexFromExploration = () => sampleIndexFromWeights(weights, randomFn);
                 for (let t = 0; t < attempts; t++) {
@@ -1794,9 +1765,26 @@ const DOM = {};
         const winnerStats = ensureCoasterStats(winner) || { elo:1500, battles:0, wins:0, losses:0 };
         const loserStats = ensureCoasterStats(loser) || { elo:1500, battles:0, wins:0, losses:0 };
 
-        // compute ELO outcome
+        // Capture ELO values BEFORE battle
+        const winnerEloBefore = winnerStats.elo;
+        const loserEloBefore = loserStats.elo;
+
+        // compute ELO outcome and potential changes
         const eloOutcome = calculateEloAdaptiveFromStats(winnerStats, loserStats);
-        const { newWinnerElo, newLoserElo } = eloOutcome;
+        const { newWinnerElo, newLoserElo, K } = eloOutcome;
+        
+        // Calculate expected win probabilities
+        const expectedWinnerProb = 1 / (1 + Math.pow(10, (loserEloBefore - winnerEloBefore) / 400));
+        const expectedLoserProb = 1 - expectedWinnerProb;
+        
+        // Calculate potential gains/losses for both outcomes
+        const winnerPotentialGain = newWinnerElo - winnerEloBefore;
+        const loserPotentialLoss = newLoserElo - loserEloBefore;
+        
+        // Calculate what would happen if loser won instead
+        const loserIfWinOutcome = calculateEloAdaptiveFromStats(loserStats, winnerStats);
+        const loserPotentialGain = loserIfWinOutcome.newWinnerElo - loserEloBefore;
+        const winnerPotentialLoss = loserIfWinOutcome.newLoserElo - winnerEloBefore;
 
         const winnerId = getCoasterId(winner);
 
@@ -1817,15 +1805,42 @@ const DOM = {};
             loserStats.battles++; loserStats.losses++;
             totalBattlesCount++;
 
-            // record and persist
-            recordBattle(currentBattle[0], currentBattle[1], winner.naam, loser.naam);
-            // mark the most recently recorded history entry as a close fight when applicable
-            try {
-                const wasCloseMatchFlag = Math.abs(oldWinnerRank - oldLoserRank) < 3;
-                if (coasterHistory && coasterHistory.length > 0) {
-                    coasterHistory[coasterHistory.length - 1].closeFight = !!wasCloseMatchFlag;
-                }
-            } catch (e) { /* ignore */ }
+            // Get ranks after ELO changes
+            const newWinnerRank = getRanking(winner.naam);
+            const newLoserRank = getRanking(loser.naam);
+            
+            // Determine if this was a close fight
+            const wasCloseMatchFlag = Math.abs(oldWinnerRank - oldLoserRank) < 3;
+            
+            // Build comprehensive battle stats for storage
+            const battleStats = {
+                statsA: {
+                    eloBefore: (currentBattle[0].naam === winner.naam) ? winnerEloBefore : loserEloBefore,
+                    eloAfter: (currentBattle[0].naam === winner.naam) ? winnerStats.elo : loserStats.elo,
+                    kFactor: K,
+                    potentialGain: (currentBattle[0].naam === winner.naam) ? winnerPotentialGain : loserPotentialGain,
+                    potentialLoss: (currentBattle[0].naam === winner.naam) ? winnerPotentialLoss : loserPotentialLoss,
+                    rankBefore: (currentBattle[0].naam === winner.naam) ? oldWinnerRank : oldLoserRank,
+                    rankAfter: (currentBattle[0].naam === winner.naam) ? newWinnerRank : newLoserRank,
+                    expectedWinProbability: (currentBattle[0].naam === winner.naam) ? expectedWinnerProb : expectedLoserProb,
+                    totalBattlesBefore: (currentBattle[0].naam === winner.naam) ? winnerStats.battles - 1 : loserStats.battles - 1
+                },
+                statsB: {
+                    eloBefore: (currentBattle[1].naam === winner.naam) ? winnerEloBefore : loserEloBefore,
+                    eloAfter: (currentBattle[1].naam === winner.naam) ? winnerStats.elo : loserStats.elo,
+                    kFactor: K,
+                    potentialGain: (currentBattle[1].naam === winner.naam) ? winnerPotentialGain : loserPotentialGain,
+                    potentialLoss: (currentBattle[1].naam === winner.naam) ? winnerPotentialLoss : loserPotentialLoss,
+                    rankBefore: (currentBattle[1].naam === winner.naam) ? oldWinnerRank : oldLoserRank,
+                    rankAfter: (currentBattle[1].naam === winner.naam) ? newWinnerRank : newLoserRank,
+                    expectedWinProbability: (currentBattle[1].naam === winner.naam) ? expectedWinnerProb : expectedLoserProb,
+                    totalBattlesBefore: (currentBattle[1].naam === winner.naam) ? winnerStats.battles - 1 : loserStats.battles - 1
+                },
+                closeFight: wasCloseMatchFlag
+            };
+
+            // record and persist with comprehensive stats
+            recordBattle(currentBattle[0], currentBattle[1], winner.naam, loser.naam, { battleStats });
             saveData();
 
             // Track for achievements
@@ -1844,8 +1859,7 @@ const DOM = {};
             if (cards[index]) cards[index].classList.add('winner');
             if (cards[1 - index]) cards[1 - index].classList.add('loser');
 
-            // compute ranks after update
-            const newWinnerRank = getRanking(winner.naam);
+            // compute rank change (newWinnerRank already calculated above)
             const rankChange = oldWinnerRank - newWinnerRank; // positive = climbed
 
             if (rankChange > 0) {
@@ -1859,7 +1873,7 @@ const DOM = {};
             // refresh ranking table and animate swap if the relative ordering changed between these two
             updateRanking();
             // if winner and loser switched relative order compared to before, animate swap
-            const newLoserRank = getRanking(loser.naam);
+            // (newWinnerRank and newLoserRank already calculated above)
             const wasWinnerBelow = oldWinnerRank > oldLoserRank;
             const nowWinnerAbove = newWinnerRank < newLoserRank;
             if (wasWinnerBelow && nowWinnerAbove) {
@@ -1907,10 +1921,10 @@ const DOM = {};
             }
         }).catch((e)=>{
             console.error('close-battle flow error', e);
-            // fallback apply normally
+            // fallback apply normally (without comprehensive stats since this is error recovery)
             winnerStats.elo = newWinnerElo; loserStats.elo = newLoserElo;
             winnerStats.battles++; winnerStats.wins++; loserStats.battles++; loserStats.losses++; totalBattlesCount++;
-            recordBattle(currentBattle[0], currentBattle[1], winner.naam, loser.naam);
+            recordBattle(currentBattle[0], currentBattle[1], winner.naam, loser.naam); // Basic record without stats
             saveData(); updateRanking(); displayBattle(); isProcessingChoice = false;
             resolvingBattle = false;
         });
@@ -2309,34 +2323,164 @@ const DOM = {};
         const entry = coasterHistory[index];
         const oldWinner = entry.winner;
         const newWinner = (entry.winner === entry.a) ? entry.b : entry.a;
+        const oldLoser = newWinner; // The new winner was the old loser
+        
+        console.log('=== SWITCHING WINNER ===');
+        console.log('Old winner:', oldWinner);
+        console.log('New winner:', newWinner);
+        
+        // Get current ranks before switching
+        const oldWinnerRankBefore = getCoasterRank(oldWinner);
+        const newWinnerRankBefore = getCoasterRank(newWinner);
+        
+        console.log('Current ranks before switch:', {
+            [oldWinner]: oldWinnerRankBefore,
+            [newWinner]: newWinnerRankBefore
+        });
         
         // Update the winner in the history entry
         entry.winner = newWinner;
+        entry.loser = oldWinner;
         
         // Update ELO ratings by reversing the previous outcome
-        // First, reverse the old result
         const winnerStats = coasterStats[oldWinner];
         const loserStats = coasterStats[newWinner];
         
-            if (winnerStats && loserStats) {
+        if (winnerStats && loserStats && entry.statsA && entry.statsB) {
+            console.log('Current ELO before restoration:', {
+                [oldWinner]: winnerStats.elo,
+                [newWinner]: loserStats.elo
+            });
+            
+            // Restore ELO to BEFORE this battle happened (to avoid compounding errors)
+            const aStats = coasterStats[entry.a];
+            const bStats = coasterStats[entry.b];
+            
+            if (aStats && bStats) {
+                aStats.elo = entry.statsA.eloBefore;
+                bStats.elo = entry.statsB.eloBefore;
+                
+                console.log('Restored ELO to pre-battle state:', {
+                    [entry.a]: aStats.elo,
+                    [entry.b]: bStats.elo
+                });
+            }
+            
             // Reverse old outcome
             winnerStats.wins--;
             loserStats.losses--;
+            
+            console.log('Reversed win/loss counts:', {
+                [oldWinner]: { wins: winnerStats.wins, losses: winnerStats.losses },
+                [newWinner]: { wins: loserStats.wins, losses: loserStats.losses }
+            });
             
             // Apply new outcome
             loserStats.wins++;
             winnerStats.losses++;
             
-            // Recalculate ELO (swap who won)
-                const { newWinnerElo, newLoserElo } = calculateEloAdaptiveFromStats(loserStats, winnerStats);
-                loserStats.elo = newWinnerElo;
-                winnerStats.elo = newLoserElo;
+            console.log('Applied new outcome:', {
+                [oldWinner]: { wins: winnerStats.wins, losses: winnerStats.losses },
+                [newWinner]: { wins: loserStats.wins, losses: loserStats.losses }
+            });
+            
+            // Now recalculate ELO from the original before-battle state with new winner
+            const newWinnerStats = coasterStats[newWinner];
+            const oldWinnerStats = coasterStats[oldWinner];
+            
+            const eloOutcome = calculateEloAdaptiveFromStats(newWinnerStats, oldWinnerStats);
+            const { newWinnerElo, newLoserElo, K } = eloOutcome;
+            
+            console.log('Recalculated ELO:', {
+                kFactor: K,
+                [newWinner]: `${newWinnerStats.elo} → ${newWinnerElo}`,
+                [oldWinner]: `${oldWinnerStats.elo} → ${newLoserElo}`
+            });
+            
+            newWinnerStats.elo = newWinnerElo;
+            oldWinnerStats.elo = newLoserElo;
+            
+            // Update comprehensive battle stats if they exist
+            if (entry.statsA && entry.statsB) {
+                // Get new ranks after switching
+                const oldWinnerRankAfter = getCoasterRank(oldWinner);
+                const newWinnerRankAfter = getCoasterRank(newWinner);
+                
+                // Swap the winner/loser data in statsA and statsB
+                const isAtheNewWinner = (entry.a === newWinner);
+                
+                // Store original values before swapping
+                const origStatsA = {
+                    potentialGain: entry.statsA.potentialGain,
+                    potentialLoss: entry.statsA.potentialLoss
+                };
+                const origStatsB = {
+                    potentialGain: entry.statsB.potentialGain,
+                    potentialLoss: entry.statsB.potentialLoss
+                };
+                
+                if (isAtheNewWinner) {
+                    // A is now winner, B is now loser - update their after-battle values
+                    entry.statsA.eloAfter = newWinnerStats.elo;
+                    entry.statsA.rankAfter = newWinnerRankAfter;
+                    // Swap: A's new potentialGain/Loss comes from B's old values
+                    entry.statsA.potentialGain = origStatsB.potentialGain;
+                    entry.statsA.potentialLoss = origStatsB.potentialLoss;
+                    
+                    entry.statsB.eloAfter = oldWinnerStats.elo;
+                    entry.statsB.rankAfter = oldWinnerRankAfter;
+                    // Swap: B's new potentialGain/Loss comes from A's old values
+                    entry.statsB.potentialGain = origStatsA.potentialGain;
+                    entry.statsB.potentialLoss = origStatsA.potentialLoss;
+                } else {
+                    // B is now winner, A is now loser
+                    entry.statsB.eloAfter = newWinnerStats.elo;
+                    entry.statsB.rankAfter = newWinnerRankAfter;
+                    // Swap: B's new potentialGain/Loss comes from A's old values
+                    entry.statsB.potentialGain = origStatsA.potentialGain;
+                    entry.statsB.potentialLoss = origStatsA.potentialLoss;
+                    
+                    entry.statsA.eloAfter = oldWinnerStats.elo;
+                    entry.statsA.rankAfter = oldWinnerRankAfter;
+                    // Swap: A's new potentialGain/Loss comes from B's old values
+                    entry.statsA.potentialGain = origStatsB.potentialGain;
+                    entry.statsA.potentialLoss = origStatsB.potentialLoss;
+                }
+                
+                console.log('Updated battle stats:', {
+                    statsA: {
+                        name: entry.a,
+                        eloAfter: entry.statsA.eloAfter,
+                        rankAfter: entry.statsA.rankAfter,
+                        potentialGain: entry.statsA.potentialGain,
+                        potentialLoss: entry.statsA.potentialLoss
+                    },
+                    statsB: {
+                        name: entry.b,
+                        eloAfter: entry.statsB.eloAfter,
+                        rankAfter: entry.statsB.rankAfter,
+                        potentialGain: entry.statsB.potentialGain,
+                        potentialLoss: entry.statsB.potentialLoss
+                    }
+                });
+            }
         }
         
         saveData();
         displayHistory();
         updateRanking();
         
+        // Get new ranks after switching for toast message
+        const oldWinnerRankAfter = getCoasterRank(oldWinner);
+        const newWinnerRankAfter = getCoasterRank(newWinner);
+        
+        console.log('Final ranks after switch:', {
+            [oldWinner]: oldWinnerRankAfter,
+            [newWinner]: newWinnerRankAfter
+        });
+        console.log('=== SWITCH COMPLETE ===\n');
+        
+        // Simple toast message
         showToast(`Winner switched: ${newWinner} now wins against ${oldWinner}`);
     }
 
@@ -2393,6 +2537,217 @@ const DOM = {};
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
+    }
+
+    // Ranking Wizard: Recalculate all battles using current K-factors to correct for "lucky start"
+    async function runRankingWizard() {
+        if (!currentUser) {
+            alert('Select a user first!');
+            return;
+        }
+        
+        if (!coasterHistory || coasterHistory.length === 0) {
+            alert('No battle history to recalculate!');
+            return;
+        }
+        
+        console.log('🧙 === RANKING WIZARD STARTED ===');
+        console.log(`Total battles to recalculate: ${coasterHistory.length}`);
+        
+        const progressEl = document.getElementById('rankingWizardProgress');
+        const wizardBtn = document.getElementById('rankingWizardBtn');
+        
+        if (wizardBtn) wizardBtn.disabled = true;
+        
+        let totalIterations = 0;
+        let totalChanges = 0;
+        const startTime = performance.now();
+        
+        try {
+            // Keep running iterations until no coasters change position
+            while (true) {
+                totalIterations++;
+                console.log(`\n🧙 === ITERATION ${totalIterations} ===`);
+                
+                // Capture ranking positions before recalculation
+                const ranksBefore = {};
+                Object.values(coasterStats).forEach(stats => {
+                    ranksBefore[stats.name] = getCoasterRank(stats.name);
+                });
+                
+                if (progressEl) {
+                    progressEl.style.display = 'block';
+                    progressEl.textContent = `Iteration ${totalIterations}...`;
+                }
+                
+                // Process each battle in chronological order
+                for (let i = 0; i < coasterHistory.length; i++) {
+                const entry = coasterHistory[i];
+                const winner = entry.winner;
+                const loser = entry.loser || (entry.winner === entry.a ? entry.b : entry.a);
+                
+                // Skip battles without comprehensive stats (from before the update)
+                if (!entry.statsA || !entry.statsB) {
+                    console.log(`Battle ${i+1}: Missing statsA/statsB (old battle), skipping...`);
+                    continue;
+                }
+                
+                // Get stats (they should exist, but check anyway)
+                const winnerStats = coasterStats[winner];
+                const loserStats = coasterStats[loser];
+                
+                if (!winnerStats || !loserStats) {
+                    console.warn(`Battle ${i+1}: Missing stats for ${winner} or ${loser}, skipping...`);
+                    continue;
+                }
+                
+                // Step A: Restore ELO to BEFORE this battle by reversing the old outcome
+                // Get the old potential gains/losses from stored stats
+                const winnerOldPotentialGain = entry.statsA && entry.a === winner ? entry.statsA.potentialGain : 
+                                              entry.statsB && entry.b === winner ? entry.statsB.potentialGain : 0;
+                const loserOldPotentialLoss = entry.statsA && entry.a === loser ? entry.statsA.potentialLoss : 
+                                              entry.statsB && entry.b === loser ? entry.statsB.potentialLoss : 0;
+                
+                // Reverse the old ELO changes to get eloBefore
+                const winnerEloBefore = winnerStats.elo - winnerOldPotentialGain;
+                const loserEloBefore = loserStats.elo - loserOldPotentialLoss;
+                
+                // Get current battle counts (this represents how many battles they had BEFORE this one)
+                const winnerBattlesBefore = entry.statsA && entry.a === winner ? entry.statsA.totalBattlesBefore : 
+                                           entry.statsB && entry.b === winner ? entry.statsB.totalBattlesBefore : 
+                                           winnerStats.battles - 1;
+                const loserBattlesBefore = entry.statsA && entry.a === loser ? entry.statsA.totalBattlesBefore : 
+                                          entry.statsB && entry.b === loser ? entry.statsB.totalBattlesBefore : 
+                                          loserStats.battles - 1;
+                
+                // Calculate K-factors based on battles at that time
+                const winnerK = computeAdaptiveK(winnerBattlesBefore);
+                const loserK = computeAdaptiveK(loserBattlesBefore);
+                const K = Math.max(winnerK, loserK);
+                
+                // Calculate expected probabilities with the restored eloBefore values
+                const expectedWinner = 1 / (1 + Math.pow(10, (loserEloBefore - winnerEloBefore) / 400));
+                const expectedLoser = 1 - expectedWinner;
+                
+                // Calculate new ELO with current K-factors
+                const newWinnerElo = winnerEloBefore + K * (1 - expectedWinner);
+                const newLoserElo = loserEloBefore + K * (0 - expectedLoser);
+                
+                // Apply new ELO
+                winnerStats.elo = newWinnerElo;
+                loserStats.elo = newLoserElo;
+                
+                // Update the global ELO state for subsequent battles
+                // This ensures the next battle uses the recalculated values
+                
+                // Get new ranks
+                const winnerRankAfter = getCoasterRank(winner);
+                const loserRankAfter = getCoasterRank(loser);
+                
+                // Calculate potential gains/losses (needed for logging and stats update)
+                const winnerPotentialGain = newWinnerElo - winnerEloBefore;
+                const loserPotentialLoss = newLoserElo - loserEloBefore;
+                
+                // Calculate what would have happened if outcome was reversed
+                const loserIfWinElo = loserEloBefore + K * (1 - expectedLoser);
+                const winnerIfLoseElo = winnerEloBefore + K * (0 - expectedWinner);
+                const loserPotentialGain = loserIfWinElo - loserEloBefore;
+                const winnerPotentialLoss = winnerIfLoseElo - winnerEloBefore;
+                
+                // Update battle stats in history if they exist
+                if (entry.statsA && entry.statsB) {
+                    const isAWinner = (entry.a === winner);
+                    
+                    // Update eloBefore with the restored values
+                    entry.statsA.eloBefore = (entry.a === winner) ? winnerEloBefore : loserEloBefore;
+                    entry.statsB.eloBefore = (entry.b === winner) ? winnerEloBefore : loserEloBefore;
+                    
+                    // Update eloAfter with recalculated values
+                    entry.statsA.eloAfter = (entry.a === winner) ? newWinnerElo : newLoserElo;
+                    entry.statsB.eloAfter = (entry.b === winner) ? newWinnerElo : newLoserElo;
+                    
+                    // Update K-factor
+                    entry.statsA.kFactor = K;
+                    entry.statsB.kFactor = K;
+                    
+                    // Update ranks
+                    entry.statsA.rankAfter = (entry.a === winner) ? winnerRankAfter : loserRankAfter;
+                    entry.statsB.rankAfter = (entry.b === winner) ? winnerRankAfter : loserRankAfter;
+                    
+                    // Store potential gains/losses
+                    entry.statsA.potentialGain = (entry.a === winner) ? winnerPotentialGain : loserPotentialGain;
+                    entry.statsA.potentialLoss = (entry.a === winner) ? winnerPotentialLoss : loserPotentialLoss;
+                    entry.statsB.potentialGain = (entry.b === winner) ? winnerPotentialGain : loserPotentialGain;
+                    entry.statsB.potentialLoss = (entry.b === winner) ? winnerPotentialLoss : loserPotentialLoss;
+                }
+                
+                // Update progress every 50 battles
+                if (progressEl && (i + 1) % 50 === 0) {
+                    progressEl.textContent = `Iteration ${totalIterations}: Processing battle ${i + 1}/${coasterHistory.length}...`;
+                    await new Promise(resolve => setTimeout(resolve, 0)); // Yield to UI
+                }
+            }
+            
+            // Save and update UI after each iteration
+            saveData();
+            updateRanking();
+            
+            // Count how many coasters changed ranking positions in this iteration
+            let changedPositions = 0;
+            Object.values(coasterStats).forEach(stats => {
+                const rankAfter = getCoasterRank(stats.name);
+                const rankBefore = ranksBefore[stats.name];
+                if (rankBefore !== rankAfter) {
+                    changedPositions++;
+                    console.log(`${stats.name}: #${rankBefore} → #${rankAfter}`);
+                }
+            });
+            
+            totalChanges += changedPositions;
+            console.log(`🧙 Iteration ${totalIterations} complete: ${changedPositions} coasters changed position.`);
+            
+            // If no changes, we're done
+            if (changedPositions === 0) {
+                console.log('🧙 No more changes detected. Wizard converged!');
+                break;
+            }
+            
+            // Small delay between iterations for UI updates
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
+        // Calculate total time
+        const endTime = performance.now();
+        const totalTime = ((endTime - startTime) / 1000).toFixed(2); // Convert to seconds
+        
+        // Final summary
+        if (progressEl) {
+            progressEl.textContent = `✅ Complete! ${totalIterations} iteration${totalIterations !== 1 ? 's' : ''}, ${totalChanges} total changes.`;
+            setTimeout(() => {
+                progressEl.style.display = 'none';
+                progressEl.textContent = '';
+            }, 3000);
+        }
+        
+        console.log('🧙 === RANKING WIZARD COMPLETE ===');
+        console.log(`Completed ${totalIterations} iterations with ${totalChanges} total ranking changes.`);
+        console.log(`⏱️ Total calculation time: ${totalTime}s`);
+        
+        showToast(`🧙 Wizard complete! ${totalIterations} iteration${totalIterations !== 1 ? 's' : ''}, ${totalChanges} change${totalChanges !== 1 ? 's' : ''} in ${totalTime}s.`, 3500);
+            
+        } catch (error) {
+            console.error('Ranking Wizard error:', error);
+            if (progressEl) {
+                progressEl.textContent = '❌ Error during recalculation';
+                progressEl.style.color = '#e74c3c';
+                setTimeout(() => {
+                    progressEl.style.color = '';
+                }, 3000);
+            }
+            alert('An error occurred during recalculation. Check console for details.');
+        } finally {
+            if (wizardBtn) wizardBtn.disabled = false;
+        }
     }
 
     function sortRanking(column) {

@@ -30,9 +30,9 @@ body {
 .dev-btn {
     font-weight: 700;
     border: 1px solid #e6e6e6;
-    background: #fff;
+    background: #7f3cb3;
     padding: 8px 16px;
-    height: 44px;
+    height: 44px; 
     min-width: 110px;
     border-radius: 10px;
     cursor: pointer;
@@ -128,6 +128,18 @@ body {
 .dev-menu-header { font-weight: 700; font-size: 0.95em; font-family: inherit; color: #111827; margin-bottom: 8px; }
 /* primary simulate button styling consolidated below */
 .dev-progress { font-weight: 700; }
+
+/* Ranking Wizard button - purple with white text */
+#rankingWizardBtn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    color: white !important;
+    border: none !important;
+}
+
+#rankingWizardBtn:hover {
+    background: linear-gradient(135deg, #5568d3 0%, #63398c 100%) !important;
+    color: white !important;
+}
 .dev-reset-btn { background: linear-gradient(135deg, #ff6b6b 0%, #f03e3e 100%); color: white; }
 .dev-reset-btn:hover { box-shadow: 0 10px 28px rgba(240,62,62,0.18); }
 
@@ -1451,57 +1463,6 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
     margin: 6px auto 14px auto;
     line-height: 1.4;
 }
-
-/* Segmented pairing toggle */
-.pair-toggle { background: #fff; }
-.pair-toggle .pair-option {
-    padding: 8px 14px;
-    border: none;
-    background: white;
-    cursor: pointer;
-    font-weight: 600;
-    color: #333;
-    position: relative;
-    min-width: 110px;
-}
-.pair-toggle .pair-option + .pair-option { border-left: 1px solid #eee; }
-.pair-toggle .pair-option.active {
-    background: linear-gradient(135deg, #4CA1AF 0%, #2C3E50 100%);
-    color: #fff;
-}
-.pair-option .help-pop {
-    display: none;
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
-    white-space: nowrap;
-    background: rgba(0,0,0,0.85);
-    color: #fff;
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-size: 0.85em;
-    z-index: 999;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
-}
-.pair-option:hover .help-pop { display: block; }
-
-/* Floating tooltip that follows cursor (used for pair-option help) */
-.floating-help {
-    position: fixed;
-    pointer-events: none;
-    background: rgba(0,0,0,0.80);
-    color: #fff;
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-size: 0.9em;
-    opacity: 0;
-    transform: translate(-50%, 8px);
-    transition: opacity 180ms ease, transform 180ms ease;
-    z-index: 10000;
-    white-space: nowrap;
-}
-.floating-help.show { opacity: 1; transform: translate(-50%, 0); }
 
 .pairing-controls-wrapper { display:flex;flex-direction:column;align-items:center; }
 #pairingControls { max-height: 240px; opacity: 1; }
