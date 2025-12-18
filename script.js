@@ -284,6 +284,12 @@ const DOM = {};
         // Load or initialize stats
         loadUserData();
         
+        // Load achievements
+        if (typeof achievementManager !== 'undefined') {
+            achievementManager.load(user);
+            updateAchievementsTab();
+        }
+        
         // Refresh displays
         displayBattle();
         updateRanking();
@@ -491,6 +497,21 @@ const DOM = {};
                     closeBattleCounters: {
                         counter: localStorage.getItem(CR_STORAGE_COUNTER) || '0',
                         threshold: localStorage.getItem(CR_STORAGE_THRESHOLD) || '25'
+                    },
+                    achievements: {
+                        unlocked: typeof achievementManager !== 'undefined' 
+                            ? Object.fromEntries(achievementManager.unlockedAchievements)
+                            : {},
+                        stats: {
+                            leftStreak: typeof achievementManager !== 'undefined' ? achievementManager.leftStreak : 0,
+                            rightStreak: typeof achievementManager !== 'undefined' ? achievementManager.rightStreak : 0,
+                            perfectMatches: typeof achievementManager !== 'undefined' ? achievementManager.perfectMatches : 0,
+                            closeFights: typeof achievementManager !== 'undefined' ? achievementManager.closeFights : 0,
+                            sessionBattles: typeof achievementManager !== 'undefined' ? achievementManager.sessionBattles : 0,
+                            lastBattleDate: typeof achievementManager !== 'undefined' ? achievementManager.lastBattleDate : null,
+                            consecutiveDays: typeof achievementManager !== 'undefined' ? achievementManager.consecutiveDays : 0,
+                            dailyBattleDates: typeof achievementManager !== 'undefined' ? [...achievementManager.dailyBattleDates] : []
+                        }
                     }
                 }
             };
@@ -510,6 +531,12 @@ const DOM = {};
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
+            
+            // Track export for achievements
+            if (typeof achievementManager !== 'undefined') {
+                achievementManager.recordExport();
+                checkAndShowAchievements();
+            }
             
             showToast(`✅ Data exported for ${currentUser}`);
         } catch (error) {
@@ -573,6 +600,29 @@ const DOM = {};
                     localStorage.setItem(CR_STORAGE_THRESHOLD, data.closeBattleCounters.threshold || '25');
                 }
 
+                // Restore achievements
+                if (data.achievements && typeof achievementManager !== 'undefined') {
+                    // Restore unlocked achievements
+                    if (data.achievements.unlocked) {
+                        achievementManager.unlockedAchievements = new Map(Object.entries(data.achievements.unlocked));
+                    }
+                    
+                    // Restore achievement stats
+                    if (data.achievements.stats) {
+                        const stats = data.achievements.stats;
+                        achievementManager.leftStreak = stats.leftStreak || 0;
+                        achievementManager.rightStreak = stats.rightStreak || 0;
+                        achievementManager.perfectMatches = stats.perfectMatches || 0;
+                        achievementManager.closeFights = stats.closeFights || 0;
+                        achievementManager.sessionBattles = stats.sessionBattles || 0;
+                        achievementManager.lastBattleDate = stats.lastBattleDate || null;
+                        achievementManager.consecutiveDays = stats.consecutiveDays || 0;
+                        achievementManager.dailyBattleDates = new Set(stats.dailyBattleDates || []);
+                    }
+                    
+                    achievementManager.save(currentUser);
+                }
+
                 // Save to localStorage
                 saveData();
                 
@@ -581,6 +631,7 @@ const DOM = {};
                 displayHistory();
                 displayBattle();
                 applySettingsToUI();
+                updateAchievementsTab();
                 
                 showToast(`✅ Data imported successfully for ${importUser}`);
             } catch (error) {
@@ -1777,6 +1828,17 @@ const DOM = {};
             } catch (e) { /* ignore */ }
             saveData();
 
+            // Track for achievements
+            const wasCloseFight = Math.abs(oldWinnerRank - oldLoserRank) < 3;
+            const perfectMatch = (winner.park === loser.park) && 
+                               (winner.fabrikant === loser.fabrikant) &&
+                               winner.park && loser.park && 
+                               winner.fabrikant && loser.fabrikant;
+            
+            if (typeof achievementManager !== 'undefined') {
+                achievementManager.recordBattle(index, perfectMatch, wasCloseFight);
+            }
+
             // Visual feedback on cards
             const cards = document.querySelectorAll('.coaster-card');
             if (cards[index]) cards[index].classList.add('winner');
@@ -1826,13 +1888,22 @@ const DOM = {};
 
                 const cardEl = (document.querySelectorAll('.coaster-card') || [])[index];
                 celebrateWinner(cardEl, winner.naam).then(()=>{
+                    // Check achievements after celebration
+                    checkAndShowAchievements();
                     // small pause then continue
                     setTimeout(()=>{ try{ restoreVsDivider(); }catch(e){} displayBattle(); isProcessingChoice = false; resolvingBattle = false; }, 220);
                 });
             } else {
                 // delay before next battle: celebrate longer if we triggered epic
                 const DELAY = triggered ? 1800 : 1500;
-                setTimeout(()=>{ try{ restoreVsDivider(); }catch(e){} displayBattle(); isProcessingChoice = false; resolvingBattle = false; }, DELAY);
+                setTimeout(()=>{ 
+                    try{ restoreVsDivider(); }catch(e){} 
+                    displayBattle(); 
+                    isProcessingChoice = false; 
+                    resolvingBattle = false;
+                    // Check achievements after battle completes
+                    checkAndShowAchievements();
+                }, DELAY);
             }
         }).catch((e)=>{
             console.error('close-battle flow error', e);
@@ -1891,6 +1962,16 @@ const DOM = {};
         } catch (e) {
             // ensure the battle view is consistent even if loadCoasterData throws
             try { displayBattle(); } catch (ee) {}
+        }
+
+        // Initialize achievements display if a user was previously selected
+        const lastUser = localStorage.getItem('lastUser');
+        if (lastUser && typeof achievementManager !== 'undefined') {
+            setTimeout(() => {
+                if (currentUser) {
+                    updateAchievementsTab();
+                }
+            }, 100);
         }
 
         // Dev toggle uses inline onclick; no extra listener needed here.
@@ -1961,6 +2042,12 @@ const DOM = {};
             updateRanking();
         } else if (tabName === 'history') {
             displayHistory();
+        } else if (tabName === 'achievements') {
+            console.log('Switching to achievements tab');
+            const achievementsTab = document.getElementById('achievements-tab');
+            console.log('Achievements tab element:', achievementsTab);
+            console.log('Achievements tab has active class:', achievementsTab ? achievementsTab.classList.contains('active') : 'element not found');
+            updateAchievementsTab();
         }
     }
 
@@ -2507,9 +2594,29 @@ const DOM = {};
                 totalBattlesCount = 0;
                 coasterHistory = [];
                 completedPairs = new Set();
+                
+                // Reset achievements
+                if (typeof achievementManager !== 'undefined') {
+                    achievementManager.unlockedAchievements.clear();
+                    achievementManager.leftStreak = 0;
+                    achievementManager.rightStreak = 0;
+                    achievementManager.perfectMatches = 0;
+                    achievementManager.closeFights = 0;
+                    achievementManager.sessionBattles = 0;
+                    achievementManager.lastBattleDate = null;
+                    achievementManager.consecutiveDays = 0;
+                    achievementManager.dailyBattleDates = new Set();
+                    achievementManager.save(currentUser);
+                    
+                    // Clear localStorage for achievements
+                    localStorage.removeItem(`achievements_${currentUser}`);
+                    localStorage.removeItem(`achievementStats_${currentUser}`);
+                }
+                
                 saveData();
                 displayBattle();
                 updateRanking();
+                updateAchievementsTab();
                 alert('Alle data is gereset! 🔄');
             }
         }
@@ -2571,4 +2678,153 @@ function downloadRankingCSV() {
     URL.revokeObjectURL(url);
     
     showToast('✅ CSV downloaded!');
+}
+
+// ============================================
+// ACHIEVEMENTS SYSTEM INTEGRATION
+// ============================================
+
+// Gather current game statistics for achievement checking
+function getGameStats() {
+    const statsArray = Object.values(coasterStats);
+    
+    // Check if any coaster is ranked #1
+    const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
+    const hasTopRankedCoaster = sorted.length > 0;
+    
+    // Check if all coasters have minimum battles
+    const allCoastersMinBattles = statsArray.length > 0 ? 
+        Math.min(...statsArray.map(s => s.battles)) : 0;
+    
+    // Check if all pairs completed
+    const allPairsCompleted = areAllPairsCompleted();
+    
+    // Get unique parks and manufacturers from battled coasters
+    const battledCoasters = statsArray.filter(s => s.battles > 0);
+    const uniqueParks = new Set(battledCoasters.map(s => s.park).filter(Boolean)).size;
+    const uniqueManufacturers = new Set(battledCoasters.map(s => s.manufacturer).filter(Boolean)).size;
+    
+    return {
+        totalBattles: totalBattlesCount,
+        sessionBattles: achievementManager.sessionBattles,
+        closeFights: achievementManager.closeFights,
+        hasTopRankedCoaster,
+        allCoastersMinBattles,
+        allPairsCompleted,
+        leftStreak: achievementManager.leftStreak,
+        rightStreak: achievementManager.rightStreak,
+        perfectMatches: achievementManager.perfectMatches,
+        uniqueParks,
+        uniqueManufacturers,
+        consecutiveDays: achievementManager.consecutiveDays
+    };
+}
+
+// Check for new achievements and show toasts
+function checkAndShowAchievements() {
+    if (!currentUser || typeof achievementManager === 'undefined') return;
+    
+    const stats = getGameStats();
+    const newAchievements = achievementManager.checkAchievements(stats, currentUser);
+    
+    // Show toast for each new achievement with staggered timing
+    newAchievements.forEach((achievement, index) => {
+        setTimeout(() => {
+            showAchievementToast(achievement);
+        }, index * 600); // Stagger by 600ms
+    });
+    
+    // Always update achievements tab display (not just when new achievements)
+    updateAchievementsTab();
+}
+
+// Render the achievements tab
+function updateAchievementsTab() {
+    console.log('updateAchievementsTab called');
+    console.log('achievementManager exists:', typeof achievementManager !== 'undefined');
+    
+    if (typeof achievementManager === 'undefined') {
+        console.warn('achievementManager is undefined');
+        return;
+    }
+    
+    const grid = document.getElementById('achievementsGrid');
+    const progressText = document.getElementById('achievementProgress');
+    const progressPercentage = document.getElementById('achievementPercentage');
+    const progressBar = document.getElementById('achievementProgressBar');
+    const tabCounter = document.getElementById('achievementCount');
+    
+    if (!grid) {
+        console.warn('achievementsGrid element not found');
+        return;
+    }
+    
+    const achievements = achievementManager.getAllAchievements();
+    const unlockedCount = achievementManager.getUnlockedCount();
+    const totalCount = achievementManager.getTotalCount();
+    const percentage = Math.round((unlockedCount / totalCount) * 100);
+    
+    console.log('Updating achievements tab:', { unlockedCount, totalCount, percentage });
+    
+    // Update progress indicators
+    if (progressText) progressText.textContent = `${unlockedCount} / ${totalCount}`;
+    if (progressPercentage) progressPercentage.textContent = `(${percentage}%)`;
+    if (progressBar) progressBar.style.width = `${percentage}%`;
+    if (tabCounter) tabCounter.textContent = `${unlockedCount}/${totalCount}`;
+    
+    // Render achievement cards
+    grid.innerHTML = achievements.map(achievement => {
+        const lockedClass = achievement.unlocked ? 'unlocked' : 'locked';
+        const rarityClass = `rarity-${achievement.rarity || 'common'}`;
+        
+        let dateHtml = '';
+        if (achievement.unlocked && achievement.unlockedDate) {
+            try {
+                const date = new Date(achievement.unlockedDate);
+                const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                dateHtml = `<div class="achievement-date">Unlocked ${dateStr}</div>`;
+            } catch (e) {
+                // Ignore date formatting errors
+            }
+        }
+        
+        return `
+            <div class="achievement-card ${lockedClass} ${rarityClass}" data-rarity="${achievement.rarity || 'common'}">
+                <div class="achievement-icon">${achievement.icon}</div>
+                <div class="achievement-name">${achievement.name}</div>
+                <div class="achievement-desc">${achievement.description}</div>
+                ${dateHtml}
+            </div>
+        `;
+    }).join('');
+    
+    console.log('Achievement cards rendered:', achievements.length);
+}
+
+// Filter achievements by rarity
+function filterAchievements(rarity) {
+    const grid = document.getElementById('achievementsGrid');
+    if (!grid) return;
+    
+    const cards = grid.querySelectorAll('.achievement-card');
+    const filterButtons = document.querySelectorAll('.filter-tag');
+    
+    // Update active state on filter buttons
+    filterButtons.forEach(btn => {
+        if (btn.dataset.rarity === rarity) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    
+    // Show/hide cards based on filter
+    cards.forEach(card => {
+        if (rarity === 'all') {
+            card.style.display = '';
+        } else {
+            const hasRarity = card.classList.contains(`rarity-${rarity}`);
+            card.style.display = hasRarity ? '' : 'none';
+        }
+    });
 }
