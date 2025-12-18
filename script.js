@@ -2774,7 +2774,7 @@ const DOM = {};
 
     function updateRanking() {
         if (!currentUser) {
-            document.getElementById('rankingBody').innerHTML = '<tr><td colspan="9" class="no-battles">Select a user first! 🎢</td></tr>';
+            document.getElementById('rankingBody').innerHTML = '<tr><td colspan="8" class="no-battles">Select a user first! 🎢</td></tr>';
             return;
         }
         
@@ -2877,7 +2877,7 @@ const DOM = {};
 
         
         if (totalBattles === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" class="no-battles">Start met battlen om je ranking te zien! 🎢</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="no-battles">Start met battlen om je ranking te zien! 🎢</td></tr>';
             rankingCardsContainer.innerHTML = '';
             return;
         }
@@ -2903,7 +2903,6 @@ const DOM = {};
                         <td><span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.battles}</span></td>
                         <td><span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.wins}</span></td>
                         <td><span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.losses}</span></td>
-                        <td>${winrate}%</td>
                     </tr>
                 `);
 
@@ -3080,6 +3079,7 @@ function getGameStats() {
         allPairsCompleted,
         leftStreak: achievementManager.leftStreak,
         rightStreak: achievementManager.rightStreak,
+        alternatingStreak: achievementManager.alternatingStreak,
         perfectMatches: achievementManager.perfectMatches,
         uniqueParks,
         uniqueManufacturers,

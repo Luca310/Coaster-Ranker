@@ -117,10 +117,18 @@ const ACHIEVEMENTS = {
     rightHanded: {
         id: 'rightHanded',
         name: 'Right Handed',
-        description: 'Pick the right card 7 times in a row',
+        description: 'Choose the right card 5 times in a row',
         icon: '👉',
         category: 'patterns',
-        condition: (stats) => stats.rightStreak >= 7
+        condition: (stats) => stats.rightStreak >= 5
+    },
+    alternatingPattern: {
+        id: 'alternatingPattern',
+        name: 'Indecisive',
+        description: 'Alternate between left and right for 10 battles in a row',
+        icon: '🔀',
+        category: 'patterns',
+        condition: (stats) => stats.alternatingStreak >= 10
     },
     
     // Collection
@@ -241,6 +249,8 @@ class AchievementManager {
         this.sessionBattles = 0;
         this.leftStreak = 0;
         this.rightStreak = 0;
+        this.alternatingStreak = 0;
+        this.lastCardPosition = null;
         this.closeFights = 0;
         this.perfectMatches = 0;
         this.lastBattleDate = null;
@@ -272,6 +282,8 @@ class AchievementManager {
                 const stats = JSON.parse(savedStats);
                 this.leftStreak = stats.leftStreak || 0;
                 this.rightStreak = stats.rightStreak || 0;
+                this.alternatingStreak = stats.alternatingStreak || 0;
+                this.lastCardPosition = stats.lastCardPosition !== undefined ? stats.lastCardPosition : null;
                 this.closeFights = stats.closeFights || 0;
                 this.perfectMatches = stats.perfectMatches || 0;
                 this.lastBattleDate = stats.lastBattleDate || null;
@@ -303,6 +315,8 @@ class AchievementManager {
             const stats = {
                 leftStreak: this.leftStreak,
                 rightStreak: this.rightStreak,
+                alternatingStreak: this.alternatingStreak,
+                lastCardPosition: this.lastCardPosition,
                 perfectMatches: this.perfectMatches,
                 closeFights: this.closeFights,
                 lastBattleDate: this.lastBattleDate,
@@ -373,6 +387,14 @@ class AchievementManager {
     // Record a battle outcome for achievement tracking
     recordBattle(cardPosition, perfectMatch, wasCloseFight, coasterA, coasterB) {
         this.sessionBattles++;
+        
+        // Track alternating pattern
+        if (this.lastCardPosition !== null && this.lastCardPosition !== cardPosition) {
+            this.alternatingStreak++;
+        } else if (this.lastCardPosition === cardPosition) {
+            this.alternatingStreak = 0;
+        }
+        this.lastCardPosition = cardPosition;
         
         // Track left/right streak
         if (cardPosition === 0) { // Left card chosen

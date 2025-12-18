@@ -1527,7 +1527,7 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
         flex-wrap: nowrap;
         gap: 12px;
         justify-content: center;
-        align-items: center;
+        align-items: stretch;
         width: 100%;
         max-width: 100%;
         padding: 0;
@@ -1547,9 +1547,12 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
     .coaster-card {
         max-width: none;
         min-width: 0;
-        flex: 1;
-        width: auto;
+        flex: 1 1 0;
+        width: 0;
         box-sizing: border-box;
+        align-self: stretch;
+        display: flex;
+        flex-direction: column;
     }
 
     .coaster-image {
