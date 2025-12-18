@@ -3,13 +3,13 @@
 // ============================================
 
 const ACHIEVEMENTS = {
-    // Battle-based achievements
+    // Battle achievements
     firstBlood: {
         id: 'firstBlood',
         name: 'First Blood',
         description: 'Complete your first battle',
         icon: '🎯',
-        rarity: 'common',
+        category: 'battles',
         condition: (stats) => stats.totalBattles >= 1
     },
     warmingUp: {
@@ -17,7 +17,7 @@ const ACHIEVEMENTS = {
         name: 'Warming Up',
         description: 'Complete 25 battles',
         icon: '🔥',
-        rarity: 'common',
+        category: 'battles',
         condition: (stats) => stats.totalBattles >= 25
     },
     committed: {
@@ -25,7 +25,7 @@ const ACHIEVEMENTS = {
         name: 'Committed',
         description: 'Complete 100 battles',
         icon: '💯',
-        rarity: 'uncommon',
+        category: 'battles',
         condition: (stats) => stats.totalBattles >= 100
     },
     centuryClub: {
@@ -33,7 +33,7 @@ const ACHIEVEMENTS = {
         name: 'Century Club',
         description: 'Complete 250 battles',
         icon: '⭐',
-        rarity: 'rare',
+        category: 'battles',
         condition: (stats) => stats.totalBattles >= 250
     },
     legendary: {
@@ -41,7 +41,7 @@ const ACHIEVEMENTS = {
         name: 'Legendary Voter',
         description: 'Complete 500 battles',
         icon: '👑',
-        rarity: 'epic',
+        category: 'battles',
         condition: (stats) => stats.totalBattles >= 500
     },
     thousandClub: {
@@ -49,7 +49,7 @@ const ACHIEVEMENTS = {
         name: 'Thousand Club',
         description: 'Complete 1000 battles',
         icon: '🔥',
-        rarity: 'legendary',
+        category: 'battles',
         condition: (stats) => stats.totalBattles >= 1000
     },
     speedDemon: {
@@ -57,7 +57,7 @@ const ACHIEVEMENTS = {
         name: 'Speed Demon',
         description: 'Complete 50 battles in one session',
         icon: '⚡',
-        rarity: 'epic',
+        category: 'battles',
         condition: (stats) => stats.sessionBattles >= 50
     },
     marathonRunner: {
@@ -65,17 +65,17 @@ const ACHIEVEMENTS = {
         name: 'Marathon Runner',
         description: 'Complete 100 battles in one session',
         icon: '🏃',
-        rarity: 'legendary',
+        category: 'battles',
         condition: (stats) => stats.sessionBattles >= 100
     },
     
-    // Close fight achievements
+    // Close fights
     clashOfTitans: {
         id: 'clashOfTitans',
         name: 'Clash of Titans',
         description: 'Experience your first close fight',
         icon: '💥',
-        rarity: 'uncommon',
+        category: 'close-fights',
         condition: (stats) => stats.closeFights >= 1
     },
     dramaQueen: {
@@ -83,7 +83,7 @@ const ACHIEVEMENTS = {
         name: 'Drama Queen',
         description: 'Experience 10 close fights',
         icon: '🎭',
-        rarity: 'rare',
+        category: 'close-fights',
         condition: (stats) => stats.closeFights >= 10
     },
     arenaChampion: {
@@ -91,35 +91,27 @@ const ACHIEVEMENTS = {
         name: 'Arena Champion',
         description: 'Experience 25 close fights',
         icon: '🎪',
-        rarity: 'epic',
+        category: 'close-fights',
         condition: (stats) => stats.closeFights >= 25
     },
     
-    // Ranking achievements
+    // Ranking
     balancedJudge: {
         id: 'balancedJudge',
         name: 'Balanced Judge',
         description: 'Have all coasters with at least 5 battles',
         icon: '⚖️',
-        rarity: 'epic',
+        category: 'ranking',
         condition: (stats) => stats.allCoastersMinBattles >= 5
     },
-    completionist: {
-        id: 'completionist',
-        name: 'Completionist',
-        description: 'Complete all possible matchups',
-        icon: '🏆',
-        rarity: 'legendary',
-        condition: (stats) => stats.allPairsCompleted
-    },
     
-    // Pattern achievements - card position streaks
+    // Patterns
     leftHanded: {
         id: 'leftHanded',
         name: 'Left Handed',
         description: 'Pick the left card 7 times in a row',
         icon: '👈',
-        rarity: 'rare',
+        category: 'patterns',
         condition: (stats) => stats.leftStreak >= 7
     },
     rightHanded: {
@@ -127,17 +119,17 @@ const ACHIEVEMENTS = {
         name: 'Right Handed',
         description: 'Pick the right card 7 times in a row',
         icon: '👉',
-        rarity: 'rare',
+        category: 'patterns',
         condition: (stats) => stats.rightStreak >= 7
     },
     
-    // Collection achievements
+    // Collection
     worldTraveler: {
         id: 'worldTraveler',
         name: 'World Traveler',
         description: 'Have coasters from 10+ parks in battles',
         icon: '🌍',
-        rarity: 'uncommon',
+        category: 'collection',
         condition: (stats) => stats.uniqueParks >= 10
     },
     manufacturerExpert: {
@@ -145,7 +137,7 @@ const ACHIEVEMENTS = {
         name: 'Manufacturer Expert',
         description: 'Have coasters from 10+ manufacturers in battles',
         icon: '🏭',
-        rarity: 'uncommon',
+        category: 'collection',
         condition: (stats) => stats.uniqueManufacturers >= 10
     },
     perfectMatch: {
@@ -153,17 +145,91 @@ const ACHIEVEMENTS = {
         name: 'Perfect Match',
         description: 'Complete a battle where both coasters share the same park and manufacturer',
         icon: '🎪',
-        rarity: 'rare',
+        category: 'collection',
         condition: (stats) => stats.perfectMatches >= 1
     },
     
-    // Special achievements
+    // Sibling Rivalries
+    jorisShowdown: {
+        id: 'jorisShowdown',
+        name: 'Dragon Duel',
+        description: 'Battle Joris en de Draak - Water vs Joris en de Draak - Vuur',
+        icon: '🐉',
+        category: 'siblings',
+        condition: (stats) => stats.siblingBattles?.joris >= 1
+    },
+    winjasWar: {
+        id: 'winjasWar',
+        name: 'Winja\'s War',
+        description: 'Battle Winja\'s Fear vs Winja\'s Force',
+        icon: '🌪️',
+        category: 'siblings',
+        condition: (stats) => stats.siblingBattles?.winjas >= 1
+    },
+    maxMoritzMadness: {
+        id: 'maxMoritzMadness',
+        name: 'Max & Moritz Madness',
+        description: 'Battle Max vs Moritz',
+        icon: '👬',
+        category: 'siblings',
+        condition: (stats) => stats.siblingBattles?.maxMoritz >= 1
+    },
+    halsVolldampf: {
+        id: 'halsVolldampf',
+        name: 'Hals über Kopf Clash',
+        description: 'Battle Hals-über-Kopf vs Volldampf',
+        icon: '🎢',
+        category: 'siblings',
+        condition: (stats) => stats.siblingBattles?.halsVolldampf >= 1
+    },
+    redForceFamily: {
+        id: 'redForceFamily',
+        name: 'Red Force Family',
+        description: 'Battle Red Force vs Junior Red Force',
+        icon: '🔴',
+        category: 'siblings',
+        condition: (stats) => stats.siblingBattles?.redForce >= 1
+    },
+    taronRaik: {
+        id: 'taronRaik',
+        name: 'Taron vs Raik',
+        description: 'Battle Taron vs Raik',
+        icon: '⚔️',
+        category: 'siblings',
+        condition: (stats) => stats.siblingBattles?.taronRaik >= 1
+    },
+    yoyBattle: {
+        id: 'yoyBattle',
+        name: 'Yoy Showdown',
+        description: 'Battle Yoy Thrill vs Yoy Chill',
+        icon: '🎡',
+        category: 'siblings',
+        condition: (stats) => stats.siblingBattles?.yoy >= 1
+    },
+    
+    // Special
+    keyboardWarrior: {
+        id: 'keyboardWarrior',
+        name: 'Keyboard Warrior',
+        description: 'Use arrow keys to vote in a battle',
+        icon: '⌨️',
+        category: 'special',
+        condition: (stats) => stats.usedKeyboard >= 1
+    },
+    tabMaster: {
+        id: 'tabMaster',
+        name: 'Tab Master',
+        description: 'Use number keys (1-4) to navigate tabs',
+        icon: '🔢',
+        category: 'special',
+        condition: (stats) => stats.usedNumberKeys >= 1
+    },
     consistentVoter: {
         id: 'consistentVoter',
         name: 'Consistent Voter',
         description: 'Vote daily for 3 days in a row',
         icon: '📅',
-        rarity: 'rare',
+        category: 'special',
         condition: (stats) => stats.consecutiveDays >= 3
     }
 };
@@ -180,6 +246,9 @@ class AchievementManager {
         this.lastBattleDate = null;
         this.consecutiveDays = 1;
         this.dailyBattleDates = new Set();
+        this.siblingBattles = {};
+        this.usedKeyboard = 0;
+        this.usedNumberKeys = 0;
     }
     
     // Load unlocked achievements from localStorage
@@ -208,6 +277,9 @@ class AchievementManager {
                 this.lastBattleDate = stats.lastBattleDate || null;
                 this.consecutiveDays = stats.consecutiveDays || 1;
                 this.dailyBattleDates = new Set(stats.dailyBattleDates || []);
+                this.siblingBattles = stats.siblingBattles || {};
+                this.usedKeyboard = stats.usedKeyboard || 0;
+                this.usedNumberKeys = stats.usedNumberKeys || 0;
             }
         } catch (e) {
             console.error('Failed to load achievements:', e);
@@ -235,7 +307,10 @@ class AchievementManager {
                 closeFights: this.closeFights,
                 lastBattleDate: this.lastBattleDate,
                 consecutiveDays: this.consecutiveDays,
-                dailyBattleDates: [...this.dailyBattleDates]
+                dailyBattleDates: [...this.dailyBattleDates],
+                siblingBattles: this.siblingBattles,
+                usedKeyboard: this.usedKeyboard,
+                usedNumberKeys: this.usedNumberKeys
             };
             localStorage.setItem(statsKey, JSON.stringify(stats));
         } catch (e) {
@@ -296,7 +371,7 @@ class AchievementManager {
     }
     
     // Record a battle outcome for achievement tracking
-    recordBattle(cardPosition, perfectMatch, wasCloseFight) {
+    recordBattle(cardPosition, perfectMatch, wasCloseFight, coasterA, coasterB) {
         this.sessionBattles++;
         
         // Track left/right streak
@@ -316,6 +391,30 @@ class AchievementManager {
         // Track close fights
         if (wasCloseFight) {
             this.closeFights++;
+        }
+        
+        // Track sibling battles
+        if (coasterA && coasterB) {
+            const siblings = [
+                { key: 'joris', names: ['Joris en de Draak - Water', 'Joris en de Draak - Vuur'] },
+                { key: 'winjas', names: ['Winja\'s Fear', 'Winja\'s Force'] },
+                { key: 'maxMoritz', names: ['Max', 'Moritz'] },
+                { key: 'halsVolldampf', names: ['Hals-über-Kopf', 'Volldampf'] },
+                { key: 'redForce', names: ['Red Force', 'Junior Red Force'] },
+                { key: 'taronRaik', names: ['Taron', 'Raik'] },
+                { key: 'yoy', names: ['Yoy Thrill', 'Yoy Chill'] }
+            ];
+            
+            for (const sibling of siblings) {
+                const [name1, name2] = sibling.names;
+                if ((coasterA === name1 && coasterB === name2) || (coasterA === name2 && coasterB === name1)) {
+                    if (!this.siblingBattles[sibling.key]) {
+                        this.siblingBattles[sibling.key] = 0;
+                    }
+                    this.siblingBattles[sibling.key]++;
+                    break;
+                }
+            }
         }
         
         // Track consecutive days
@@ -350,8 +449,8 @@ function showAchievementToast(achievement) {
     const toast = document.createElement('div');
     toast.className = 'achievement-toast';
     
-    const rarityClass = achievement.rarity || 'common';
-    toast.classList.add(`rarity-${rarityClass}`);
+    const categoryClass = achievement.category || 'battles';
+    toast.classList.add(`category-${categoryClass}`);
     
     toast.innerHTML = `
         <div class="achievement-icon">${achievement.icon}</div>

@@ -161,16 +161,37 @@ body {
 .dev-toggle-data.active { background: #fff; color: var(--app-accent); border-color: var(--app-accent); box-shadow: 0 8px 24px rgba(76,161,175,0.12); }
 .dev-toggle-data:focus { outline: 3px solid rgba(76,161,175,0.16); outline-offset: 2px; }
 /* Dev data card displayed next to each coaster */
-.coaster-item { display:flex; gap:12px; align-items:flex-start; flex:1; min-width:280px; max-width:400px; }
-.dev-data { background: #fcfcfd; border:1px solid #eee; padding:8px 10px; border-radius:8px; min-width:160px; color:#111827; font-size:0.9em; line-height:1.4; }
-/* Side boxes when showing dev data without shrinking cards */
-.dev-data-side { position: absolute; width: 180px; z-index: 2500; box-shadow: 0 8px 24px rgba(0,0,0,0.08); pointer-events: none; }
-.dev-data-side.left { text-align: right; }
-.dev-data-side.right { text-align: left; }
+.coaster-item { display:flex; gap:12px; align-items:flex-start; flex:1; min-width:80px; max-width:400px; }
+/* Dev-data overlay inside cards, positioned over coaster images */
+.dev-data-overlay {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    color: #fff;
+    padding: 8px 10px;
+    font-size: 0.75em;
+    line-height: 1.4;
+    pointer-events: none;
+    z-index: 10;
+    border-radius: 6px;
+    max-width: 140px;
+    backdrop-filter: blur(4px);
+}
+
+.dev-data-overlay strong {
+    color: #fff;
+}
+
 @media (max-width: 600px) {
-    .coaster-item { flex-direction: column; }
-    .dev-data { margin-left:0; margin-top:8px; }
-    .dev-data-side { position: static; width: auto; box-shadow: none; }
+    .dev-data-overlay {
+        font-size: 0.7em;
+        padding: 6px 8px;
+        line-height: 1.3;
+        max-width: 120px;
+        top: 6px;
+        left: 6px;
+    }
 }
 
  .simulate-btn {
@@ -401,12 +422,23 @@ body {
 
     .tab-content {
         display: none;
-        padding: 20px;
+        padding: 12px;
         min-height: 0;
+        overflow-x: hidden;
+        box-sizing: border-box;
     }
 
     .tab-content.active {
         display: block;
+    }
+
+    .tab-content#battle-tab.active {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        min-height: calc(100vh - var(--header-height, 80px) - 60px);
+        padding: 16px 12px;
     }
 
     .header-inner {
@@ -440,6 +472,7 @@ body {
         height: 100%;
         flex: 1;
         overflow: auto;
+        font-size: 0.8em;
     }
 
     #history-tab.active {
@@ -1492,19 +1525,22 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
     .battle-container {
         flex-direction: row;
         flex-wrap: nowrap;
-        gap: 16px;
+        gap: 12px;
         justify-content: center;
         align-items: center;
         width: 100%;
         max-width: 100%;
         padding: 0;
+        box-sizing: border-box;
+        overflow: visible;
     }
 
     .vs-divider {
         display: flex;
-        width: 60px;
-        height: 60px;
-        font-size: 1.5em;
+        width: 50px;
+        height: 50px;
+        font-size: 1.3em;
+        flex-shrink: 0;
         box-shadow: 0 3px 15px rgba(0, 0, 0, 0.25), 0 0 0 5px rgba(255, 255, 255, 0.9);
     }
 
@@ -1512,6 +1548,8 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
         max-width: none;
         min-width: 0;
         flex: 1;
+        width: auto;
+        box-sizing: border-box;
     }
 
     .coaster-image {

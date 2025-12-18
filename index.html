@@ -30,19 +30,19 @@
 
         <div class="tabs">
             <button class="tab active" onclick="switchTab('battle')">
-                <span class="tab-icon">⚔️</span>
+                <span class="tab-icon"><img src="/images/sword.svg" alt="Battle" style="width: 1em; height: 1em;"></span>
                 <span class="tab-text">Battle</span>
             </button>
             <button class="tab" onclick="switchTab('ranking')">
-                <span class="tab-icon">📊</span>
+                <span class="tab-icon"><img src="/images/chart-line-up.svg" alt="Ranking" style="width: 1em; height: 1em;"></span>
                 <span class="tab-text">Ranking</span>
             </button>
             <button class="tab" onclick="switchTab('history')">
-                <span class="tab-icon">📜</span>
+                <span class="tab-icon"><img src="/images/scroll.svg" alt="History" style="width: 1em; height: 1em;"></span>
                 <span class="tab-text">History</span>
             </button>
             <button class="tab" onclick="switchTab('achievements')">
-                <span class="tab-icon">🏆</span>
+                <span class="tab-icon"><img src="/images/trophy.svg" alt="Achievements" style="width: 1em; height: 1em;"></span>
                 <span class="tab-text">Achievements</span>
             </button>
         </div>
@@ -141,23 +141,29 @@
         <!-- Achievements Tab -->
         <div id="achievements-tab" class="tab-content">
             <div class="achievement-filters">
-                <button class="filter-tag active" data-rarity="all" onclick="filterAchievements('all')">
+                <button class="filter-tag active" data-category="all" onclick="filterAchievements('all')">
                     All
                 </button>
-                <button class="filter-tag" data-rarity="common" onclick="filterAchievements('common')">
-                    <span class="filter-dot common"></span> Common
+                <button class="filter-tag" data-category="battles" onclick="filterAchievements('battles')">
+                    ⚔️ Battles
                 </button>
-                <button class="filter-tag" data-rarity="uncommon" onclick="filterAchievements('uncommon')">
-                    <span class="filter-dot uncommon"></span> Uncommon
+                <button class="filter-tag" data-category="close-fights" onclick="filterAchievements('close-fights')">
+                    💥 Close Fights
                 </button>
-                <button class="filter-tag" data-rarity="rare" onclick="filterAchievements('rare')">
-                    <span class="filter-dot rare"></span> Rare
+                <button class="filter-tag" data-category="patterns" onclick="filterAchievements('patterns')">
+                    🔄 Patterns
                 </button>
-                <button class="filter-tag" data-rarity="epic" onclick="filterAchievements('epic')">
-                    <span class="filter-dot epic"></span> Epic
+                <button class="filter-tag" data-category="collection" onclick="filterAchievements('collection')">
+                    🌍 Collection
                 </button>
-                <button class="filter-tag" data-rarity="legendary" onclick="filterAchievements('legendary')">
-                    <span class="filter-dot legendary"></span> Legendary
+                <button class="filter-tag" data-category="siblings" onclick="filterAchievements('siblings')">
+                    👯 Siblings
+                </button>
+                <button class="filter-tag" data-category="ranking" onclick="filterAchievements('ranking')">
+                    📊 Ranking
+                </button>
+                <button class="filter-tag" data-category="special" onclick="filterAchievements('special')">
+                    ✨ Special
                 </button>
             </div>
             <div class="achievements-grid" id="achievementsGrid">

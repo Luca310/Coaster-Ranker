@@ -858,7 +858,7 @@ const DOM = {};
         const battleContainer = DOM.battleContainer || $id('battleContainer');
         if (!battleContainer) return;
         // remove existing overlays
-        battleContainer.querySelectorAll('.dev-data-side, .dev-data-inline').forEach(n => n.remove());
+        battleContainer.querySelectorAll('.dev-data-overlay').forEach(n => n.remove());
 
         if (!devShowData) return;
         if (!currentBattle || currentBattle.length < 2) return;
@@ -900,32 +900,19 @@ const DOM = {};
             <div><strong>Losses:</strong> ${rightStats.losses}</div>
         `;
 
-        if (window.innerWidth > 600) {
-            // desktop: absolute side boxes
-            const leftBox = document.createElement('div');
-            leftBox.className = 'dev-data dev-data-side left';
-            leftBox.innerHTML = devLeftHtml;
-            const rightBox = document.createElement('div');
-            rightBox.className = 'dev-data dev-data-side right';
-            rightBox.innerHTML = devRightHtml;
-            battleContainer.appendChild(leftBox);
-            battleContainer.appendChild(rightBox);
-            setTimeout(positionDevData, 0);
-        } else {
-            // mobile: inline under each card
-            const items = battleContainer.querySelectorAll('.coaster-item');
-            if (items[0]) {
-                const leftInline = document.createElement('div');
-                leftInline.className = 'dev-data dev-data-inline';
-                leftInline.innerHTML = devLeftHtml;
-                items[0].appendChild(leftInline);
-            }
-            if (items[1]) {
-                const rightInline = document.createElement('div');
-                rightInline.className = 'dev-data dev-data-inline';
-                rightInline.innerHTML = devRightHtml;
-                items[1].appendChild(rightInline);
-            }
+        // Place overlay inside coaster cards, over the images
+        const cards = battleContainer.querySelectorAll('.coaster-card');
+        if (cards[0]) {
+            const leftOverlay = document.createElement('div');
+            leftOverlay.className = 'dev-data-overlay';
+            leftOverlay.innerHTML = devLeftHtml;
+            cards[0].appendChild(leftOverlay);
+        }
+        if (cards[1]) {
+            const rightOverlay = document.createElement('div');
+            rightOverlay.className = 'dev-data-overlay';
+            rightOverlay.innerHTML = devRightHtml;
+            cards[1].appendChild(rightOverlay);
         }
     }
 
@@ -1851,7 +1838,7 @@ const DOM = {};
                                winner.fabrikant && loser.fabrikant;
             
             if (typeof achievementManager !== 'undefined') {
-                achievementManager.recordBattle(index, perfectMatch, wasCloseFight);
+                achievementManager.recordBattle(index, perfectMatch, wasCloseFight, currentBattle[0].naam, currentBattle[1].naam);
             }
 
             // Visual feedback on cards
@@ -1934,14 +1921,32 @@ const DOM = {};
     document.addEventListener('keydown', (event) => {
         if (!currentUser) return;
         
+        // Number key navigation (1-4 for tabs)
+        if (['1', '2', '3', '4'].includes(event.key)) {
+            event.preventDefault();
+            const tabMap = {
+                '1': 'battle',
+                '2': 'ranking',
+                '3': 'history',
+                '4': 'achievements'
+            };
+            achievementManager.usedNumberKeys = 1;
+            switchTab(tabMap[event.key]);
+            achievementManager.save(currentUser);
+            checkAndShowAchievements();
+            return;
+        }
+        
         const battleTab = document.getElementById('battle-tab');
         if (!battleTab.classList.contains('active')) return;
         
         if (event.key === 'ArrowLeft') {
             event.preventDefault();
+            achievementManager.usedKeyboard = 1;
             chooseWinner(0);
         } else if (event.key === 'ArrowRight') {
             event.preventDefault();
+            achievementManager.usedKeyboard = 1;
             chooseWinner(1);
         }
     });
@@ -2034,7 +2039,14 @@ const DOM = {};
         document.querySelectorAll('.tab').forEach(tab => {
             tab.classList.remove('active');
         });
-        try { event.target.classList.add('active'); } catch (e) {}
+        
+        // Find and activate the corresponding tab button
+        const tabButtons = document.querySelectorAll('.tab');
+        const tabMap = ['battle', 'ranking', 'history', 'achievements'];
+        const tabIndex = tabMap.indexOf(tabName);
+        if (tabIndex >= 0 && tabButtons[tabIndex]) {
+            tabButtons[tabIndex].classList.add('active');
+        }
         
         document.querySelectorAll('.tab-content').forEach(content => {
             content.classList.remove('active');
@@ -3071,7 +3083,10 @@ function getGameStats() {
         perfectMatches: achievementManager.perfectMatches,
         uniqueParks,
         uniqueManufacturers,
-        consecutiveDays: achievementManager.consecutiveDays
+        consecutiveDays: achievementManager.consecutiveDays,
+        siblingBattles: achievementManager.siblingBattles,
+        usedKeyboard: achievementManager.usedKeyboard,
+        usedNumberKeys: achievementManager.usedNumberKeys
     };
 }
 
@@ -3130,7 +3145,7 @@ function updateAchievementsTab() {
     // Render achievement cards
     grid.innerHTML = achievements.map(achievement => {
         const lockedClass = achievement.unlocked ? 'unlocked' : 'locked';
-        const rarityClass = `rarity-${achievement.rarity || 'common'}`;
+        const categoryClass = `category-${achievement.category || 'battles'}`;
         
         let dateHtml = '';
         if (achievement.unlocked && achievement.unlockedDate) {
@@ -3144,7 +3159,7 @@ function updateAchievementsTab() {
         }
         
         return `
-            <div class="achievement-card ${lockedClass} ${rarityClass}" data-rarity="${achievement.rarity || 'common'}">
+            <div class="achievement-card ${lockedClass} ${categoryClass}" data-category="${achievement.category || 'battles'}">
                 <div class="achievement-icon">${achievement.icon}</div>
                 <div class="achievement-name">${achievement.name}</div>
                 <div class="achievement-desc">${achievement.description}</div>
@@ -3156,8 +3171,8 @@ function updateAchievementsTab() {
     console.log('Achievement cards rendered:', achievements.length);
 }
 
-// Filter achievements by rarity
-function filterAchievements(rarity) {
+// Filter achievements by category
+function filterAchievements(category) {
     const grid = document.getElementById('achievementsGrid');
     if (!grid) return;
     
@@ -3166,7 +3181,7 @@ function filterAchievements(rarity) {
     
     // Update active state on filter buttons
     filterButtons.forEach(btn => {
-        if (btn.dataset.rarity === rarity) {
+        if (btn.dataset.category === category) {
             btn.classList.add('active');
         } else {
             btn.classList.remove('active');
@@ -3175,11 +3190,11 @@ function filterAchievements(rarity) {
     
     // Show/hide cards based on filter
     cards.forEach(card => {
-        if (rarity === 'all') {
+        if (category === 'all') {
             card.style.display = '';
         } else {
-            const hasRarity = card.classList.contains(`rarity-${rarity}`);
-            card.style.display = hasRarity ? '' : 'none';
+            const hasCategory = card.classList.contains(`category-${category}`);
+            card.style.display = hasCategory ? '' : 'none';
         }
     });
 }
