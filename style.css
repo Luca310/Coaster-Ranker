@@ -1,3 +1,45 @@
+/* Make ranking table header compact */
+.ranking-table thead tr {
+    height: 36px;
+}
+.ranking-table th {
+    padding-top: 4px;
+    padding-bottom: 4px;
+    font-size: 1em;
+    font-weight: 700;
+    background: #f5f7fa;
+    color: #2C3E50;
+    border-bottom: 1px solid #e5e7eb;
+    vertical-align: middle;
+}
+/* Ranking stats bar (coaster count & matchups) */
+.ranking-stats-minimal {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 10px;
+    font-size: 1em;
+    white-space: nowrap;
+}
+.ranking-info-box {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 1.08em;
+    color: #2C3E50;
+    font-weight: 600;
+    background: #f5f7fa;
+    border-radius: 8px;
+    padding: 8px 18px;
+    min-height: 44px;
+    box-shadow: 0 2px 8px rgba(76,161,175,0.06);
+    border: 1px solid #e5e7eb;
+    transition: background 0.2s;
+}
+.ranking-info-box span {
+    font-weight: 700;
+    color: #4CA1AF;
+}
 * {
     margin: 0;
     padding: 0;
@@ -15,6 +57,87 @@ body {
     padding: 20px;
 }
 
+/* Loading Overlay */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #4CA1AF 0%, #2C3E50 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.loading-content {
+    text-align: center;
+    color: white;
+    padding: 40px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 20px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    max-width: 400px;
+    width: 90%;
+}
+
+.loading-content h2 {
+    margin-bottom: 20px;
+    font-size: 1.5em;
+}
+
+.roller-coaster-container {
+    position: relative;
+    width: 100%;
+    height: 80px;
+    margin: 20px 0;
+}
+
+.coaster-track {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.track-line {
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3));
+}
+
+.coaster-train {
+    position: absolute;
+    top: 60px;
+    left: 0;
+    transform: translateY(calc(-100% - 5px));
+    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    gap: 8px;
+}
+
+.train-car {
+    width: 16px;
+    height: 12px;
+    background: white;
+    border-radius: 3px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+}
+
+.loading-content p {
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+
 .container {
     max-width: 1200px;
     margin: 0 auto;
@@ -25,8 +148,6 @@ body {
     overflow: hidden;
 }
 
-/* Developer button and menu */
-/* Shared dev button appearance */
 .dev-btn {
     font-weight: 700;
     border: 1px solid #e6e6e6;
@@ -43,28 +164,53 @@ body {
     justify-content: center;
     color: var(--app-dark);
     font-size: 0.95em;
+    font-family: inherit;
 }
-.dev-btn:hover { transform: translateY(-2px); opacity: 0.98; background: #f0fafb; }
-.dev-btn:active { transform: translateY(0); }
 
-.dev-btn .icon { margin-right: 8px; width: 16px; height: 16px; fill: var(--app-accent); display:inline-block; vertical-align:middle; }
+.dev-btn:hover { 
+    transform: translateY(-2px); 
+    opacity: 0.98; 
+    background: #f0fafb; 
+}
 
-/* size the simulate input to match the primary button */
-.sim-input { height:44px; padding:8px 12px; border-radius:10px; border:1px solid #e6e6e6; font-size:0.95em; color:var(--app-dark); background:#fff; box-sizing: border-box; min-width:44px; }
-.sim-input:focus { outline: none; box-shadow: 0 6px 16px rgba(76,161,175,0.06); }
+.dev-btn:active { 
+    transform: translateY(0); 
+}
+
+.dev-btn .icon { 
+    margin-right: 8px; 
+    width: 16px; 
+    height: 16px; 
+    fill: var(--app-accent); 
+    display: inline-block; 
+    vertical-align: middle; 
+}
+
+.sim-input { 
+    height: 44px; 
+    padding: 8px 12px; 
+    border-radius: 10px; 
+    border: 1px solid #e6e6e6; 
+    font-size: 0.95em; 
+    color: var(--app-dark); 
+    background: #fff; 
+    box-sizing: border-box; 
+    min-width: 44px; 
+}
+
+.sim-input:focus { 
+    outline: none; 
+    box-shadow: 0 6px 16px rgba(76,161,175,0.06); 
+}
 
 
-/* ensure gear SVGs are centered inside compact buttons */
-.dev-toggle .icon-gear { display:block; margin:auto; }
-
-/* keep active dev toggle readable on hover (use tinted background) */
-.dev-toggle-data.active:hover { background: #eef9f8; }
-
-/* buttons inside dev menu have a readable hover tint */
-.dev-menu .dev-btn:hover { background: #eef9f8; color: var(--app-dark); }
-
-/* make the floating gear an exception and stay compact */
-.dev-toggle.dev-btn { min-width: 44px; width: 44px; padding: 0; justify-content: center; border-radius: 10px; }
+.dev-toggle.dev-btn { 
+    min-width: 44px; 
+    width: 44px; 
+    padding: 0; 
+    justify-content: center; 
+    border-radius: 10px; 
+}
 
 .dev-toggle {
     position: fixed;
@@ -73,9 +219,6 @@ body {
     border-radius: 10px;
     background: #fff;
     color: var(--app-dark);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     box-shadow: 0 8px 24px rgba(0,0,0,0.12);
     cursor: pointer;
     z-index: 3000;
@@ -85,6 +228,17 @@ body {
     padding: 0 12px;
     border: 1px solid #e6e6e6;
 }
+
+.dev-toggle .icon-gear { 
+    display: block; 
+    margin: auto; 
+}
+.dev-toggle-data.active:hover, 
+.dev-menu .dev-btn:hover { 
+    background: #eef9f8; 
+    color: var(--app-dark); 
+}
+
 .dev-menu {
     position: fixed;
     left: 16px;
@@ -109,9 +263,20 @@ body {
     transform: rotate(45deg);
     box-shadow: -2px 2px 6px rgba(0,0,0,0.06);
 }
-.dev-menu-header { font-weight: 700; margin-bottom: 8px; color: #111827; }
-.dev-option { max-width: 320px; margin-bottom:6px; }
-/* Make dev menu buttons consistent width and alignment */
+.dev-menu-header, .dev-menu-body { 
+    font-weight: 700; 
+}
+
+.dev-menu-header { 
+    font-size: 0.95em; 
+    color: #111827; 
+    margin-bottom: 8px; 
+}
+.dev-option { 
+    max-width: 320px; 
+    margin-bottom: 6px; 
+}
+
 .dev-menu .dev-btn {
     display: inline-flex;
     align-items: center;
@@ -121,11 +286,8 @@ body {
     box-sizing: border-box;
     height: 44px;
 }
-/* Ensure dev menu buttons use the same font and weight as other dev buttons */
-.dev-menu .dev-btn { font-weight: 700; font-family: inherit; }
-
 /* Make the dev menu header match button weight and size */
-.dev-menu-header { font-weight: 700; font-size: 0.95em; font-family: inherit; color: #111827; margin-bottom: 8px; }
+.dev-menu-header { font-weight: 700; font-size: 0.95em; color: #111827; margin-bottom: 8px; }
 /* primary simulate button styling consolidated below */
 .dev-progress { font-weight: 700; }
 
@@ -161,7 +323,7 @@ body {
 .dev-toggle-data.active { background: #fff; color: var(--app-accent); border-color: var(--app-accent); box-shadow: 0 8px 24px rgba(76,161,175,0.12); }
 .dev-toggle-data:focus { outline: 3px solid rgba(76,161,175,0.16); outline-offset: 2px; }
 /* Dev data card displayed next to each coaster */
-.coaster-item { display:flex; gap:12px; align-items:flex-start; flex:1; min-width:80px; max-width:400px; }
+.coaster-item { display:flex; gap:12px; align-items:flex-start; flex:0 0 auto; min-width:80px; }
 /* Dev-data overlay inside cards, positioned over coaster images */
 .dev-data-overlay {
     position: absolute;
@@ -172,11 +334,16 @@ body {
     padding: 8px 10px;
     font-size: 0.75em;
     line-height: 1.4;
-    pointer-events: none;
-    z-index: 10;
+    pointer-events: auto; /* CHANGED: Allow clicks on overlay (especially for retry button) */
+    z-index: 100; /* High z-index to be above image */
     border-radius: 6px;
     max-width: 140px;
     backdrop-filter: blur(4px);
+}
+
+.dev-data-overlay button {
+    pointer-events: auto !important; /* Ensure buttons are always clickable */
+    cursor: pointer !important;
 }
 
 .dev-data-overlay strong {
@@ -210,7 +377,6 @@ body {
 /* Vertically center header-left and header-right */
 .header-left, .header-right { top: 50%; transform: translateY(-50%); }
 
-/* Top header sizing — make header visually larger on desktop */
 .header {
     position: sticky;
     top: 0;
@@ -226,13 +392,29 @@ body {
 
 /* Center the active battle tab vertically on desktop */
 @media (min-width: 601px) {
-    .tab-content#battle-tab.active {
+    .tab-content#battle-tab.active,
+    .tab-content#home-tab.active {
+        display: block;
+        min-height: 900px;
+        padding: 20px;
+    }
+    
+    .tab-content#battle-tab.active .battle-area { 
+        width: 100%; 
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 520px;
+        min-height: 860px;
     }
-    .tab-content#battle-tab.active .battle-area { width: 100%; }
+    
+    .tab-content#battle-tab.active .battle-container {
+        align-items: center;
+    }
+    
+    .tab-content#battle-tab.active .coaster-card {
+        flex: 0 0 auto;
+        width: 420px;
+    }
 }
 
 .header-inner {
@@ -314,31 +496,39 @@ body {
     color: #333;
 }
 
-.user-selector {
-    display: flex;
-    justify-content: center;
-    gap: 15px;
-    margin-top: 20px;
-    padding: 15px;
-    background: rgba(255,255,255,0.1);
-    border-radius: 10px;
+.user-btn, .hamburger-btn {
+    padding: 12px 30px;
+    border: 2px solid white;
+    background: transparent;
+    color: white;
+    border-radius: 8px;
+    font-size: 1.1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
 }
 
-/* Hamburger user menu */
 .hamburger-btn {
-    background: linear-gradient(135deg, var(--app-accent) 0%, #2C3E50 100%);
-    border: none;
-    color: white;
     padding: 8px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 1.1em;
+    border: none;
+    background: linear-gradient(135deg, var(--app-accent) 0%, #2C3E50 100%);
     font-weight: 700;
     box-shadow: 0 6px 18px rgba(0,0,0,0.12);
     transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
 }
-.hamburger-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0,0,0,0.18); opacity: 0.98; }
-.hamburger-btn:focus { outline: 3px solid rgba(76,161,175,0.18); outline-offset: 2px; }
+.user-btn:hover, .hamburger-btn:hover {
+    transform: translateY(-2px);
+}
+
+.user-btn:hover {
+    background: rgba(255,255,255,0.2);
+    transform: scale(1.05);
+}
+
+.hamburger-btn:hover {
+    box-shadow: 0 10px 28px rgba(0,0,0,0.18);
+    opacity: 0.98;
+}
 
 .user-menu {
     position: absolute;
@@ -477,9 +667,7 @@ body {
 
     #history-tab.active {
         display: flex !important;
-        overflow: hidden;
         flex-direction: column;
-        min-height: calc(100vh - 250px);
     }
 }
 
@@ -533,14 +721,6 @@ body {
     background: none;
 }
 
-.tab-icon {
-    display: none;
-}
-
-.tab-text {
-    display: inline;
-}
-
 .tab:hover {
     background: #e0e0e0;
 }
@@ -549,6 +729,14 @@ body {
     background: white;
     color: #4CA1AF;
     border-bottom: 3px solid #4CA1AF;
+}
+
+.tab-icon {
+    display: none;
+}
+
+.tab-text {
+    display: inline;
 }
 
 /* Mobile: Show icons only for inactive tabs, text for active tab */
@@ -583,7 +771,7 @@ body {
 .tab-content {
     display: none;
     padding: 20px;
-    min-height: 500px;
+    box-sizing: border-box;
 }
 
 .tab-content.active {
@@ -591,18 +779,49 @@ body {
 }
 
 /* Battle Tab */
+.battle-area {
+    position: relative;
+}
+
+/* VS Overlay - positioned on top of cards, centered */
+.vs-overlay {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 75px;
+    height: 75px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4CA1AF 0%, #2C3E50 100%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 2em;
+    font-weight: 800;
+    color: white;
+    z-index: 200;
+    box-shadow: 0 7px 27px rgba(0, 0, 0, 0.4), 0 0 0 7px rgba(255, 255, 255, 0.95);
+    letter-spacing: 3px;
+    pointer-events: none;
+}
+
+/* Show VS overlay when battle has cards */
+.battle-area:has(.coaster-card) .vs-overlay {
+    display: flex;
+}
+
 .battle-container {
     display: flex;
     gap: 30px;
     justify-content: center;
-    align-items: stretch;
-    flex-wrap: wrap;
-    position: relative;}
+    align-items: center;
+    flex-wrap: nowrap;
+    position: relative;
+}
 
 .coaster-card {
-    flex: 1;
-    min-width: 280px;
-    max-width: 400px;
+    flex: 0 0 auto;
+    width: 420px;
     background: #ffffff;
     border-radius: 20px;
     padding: 0;
@@ -621,15 +840,15 @@ body {
 }
 
 .coaster-card.winner {
-    animation: winShine 1.5s ease-out, winBounce 1.5s ease-out;
+    animation: winShine 0.8s ease-out, winBounce 0.8s ease-out;
     box-shadow: 0 12px 32px rgba(16, 185, 129, 0.3);
 }
 
 .coaster-card.loser {
     transform: scale(0.95);
     opacity: 0.6;
-    transition: all 0.4s ease;
-    animation: loserRecover 0.3s ease 1.3s forwards;
+    transition: all 0.25s ease;
+    animation: loserRecover 0.2s ease 0.7s forwards;
 }
 
 @keyframes loserRecover {
@@ -681,40 +900,6 @@ body {
     }
 }
 
-/*
-
-.coaster-card.left-card::before {
-    content: '← Linker pijltje';
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    background: rgba(102, 126, 234, 0.2);
-    padding: 5px 10px;
-    border-radius: 5px;
-    font-size: 0.8em;
-    color: #4CA1AF;
-    font-weight: 600;
-    text-align: right;
-}
-
-
-
-.coaster-card.right-card::before {
-    content: 'Rechter pijltje →';
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    background: rgba(118, 75, 162, 0.2);
-    padding: 5px 10px;
-    border-radius: 5px;
-    font-size: 0.8em;
-    color: #2C3E50;
-    font-weight: 600;
-    text-align: left;
-}
-
-    */
-
 @keyframes winPulse {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.05); }
@@ -734,7 +919,7 @@ body {
     display: flex;
     align-items: center;
     gap: 5px;
-    animation: badgePopIn 0.4s ease-out, badgeFadeOut 0.5s ease-in 3.5s forwards;
+    animation: badgePopIn 0.25s ease-out, badgeFadeOut 0.4s ease-in 1.5s forwards;
     box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
     z-index: 10;
 }
@@ -806,6 +991,20 @@ body {
     font-weight: 600;
     letter-spacing: 2px;
     border-radius: 20px 20px 0 0;
+    overflow: hidden;
+    position: relative;
+}
+
+.coaster-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform 0.3s ease;
+}
+
+.coaster-card:hover .coaster-img {
+    transform: scale(1.05);
 }
 
 .coaster-content {
@@ -897,25 +1096,37 @@ body {
     box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
 }
 
-.vs-divider {
+/* Close Fight Banner */
+.close-fight-banner {
     position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 70px;
-    height: 70px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #4CA1AF 0%, #2C3E50 100%);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.8em;
-    font-weight: 800;
-    color: white;
-    z-index: 100;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25), 0 0 0 6px rgba(255, 255, 255, 0.9);
+    top: -55px;
+    left: 0;
+    right: 0;
+    margin: 0 auto;
+    width: fit-content;
+    text-align: center;
+    font-size: 1.2em;
+    font-weight: 700;
+    color: #ffffff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    padding: 6px 18px;
     letter-spacing: 2px;
-    pointer-events: none; /* allow clicks through the VS badge */
+    background: #ffd86b;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(255, 200, 90, 0.3);
+    white-space: nowrap;
+    z-index: 50;
+    animation: closeFightPulse 2s ease-in-out infinite;
+}
+
+@keyframes closeFightPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+@keyframes closeFightPulse {
+    0%, 100% { transform: scale(1); text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8), 0 0 20px rgba(255, 215, 0, 0.4); }
+    50% { transform: scale(1.05); text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8), 0 0 30px rgba(255, 215, 0, 0.6); }
 }
 
 /* Ranking Tab */
@@ -1026,13 +1237,13 @@ body {
     }
 }
 
-/* Utility: show filters enabled when body has .coaster-selected */
-body:not(.coaster-selected) .history-filters .filter-btn {
-    opacity: 0.45;
-    pointer-events: none;
-    filter: grayscale(0.08);
+/* Utility: always show 'all' and 'close' buttons, but hide wins/losses when no coaster selected */
+.history-filters .filter-btn.coaster-specific {
+    display: none;
 }
-body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events: auto; }
+body.coaster-selected .history-filters .filter-btn.coaster-specific {
+    display: inline-block;
+}
 
 /* History row layout: center the arrow regardless of name lengths */
 .history-row {
@@ -1074,24 +1285,24 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
 
 .stats-summary {
     background: #f5f7fa;
-    padding: 20px;
-    border-radius: 10px;
+    padding: 12px;
+    border-radius: 8px;
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 20px;
+    gap: 12px;
     width: 100%;
 }
 
 .stat-item {
     text-align: center;
-    padding: 12px;
+    padding: 10px 8px;
     background: white;
-    border-radius: 8px;
+    border-radius: 6px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
 
 .stat-value {
-    font-size: 2em;
+    font-size: 1.6em;
     font-weight: bold;
     color: #4CA1AF;
     display: block;
@@ -1099,7 +1310,7 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
 
 .stat-label {
     color: #666;
-    font-size: 0.9em;
+    font-size: 0.8em;
     margin-top: 4px;
     display: block;
 }
@@ -1148,23 +1359,24 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
     background: linear-gradient(135deg, #ff6b6b 0%, #f03e3e 100%);
     color: white;
     border: none;
-    padding: 12px 20px;
-    border-radius: 10px;
-    font-size: 1em;
-    font-weight: 700;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 0.95em;
+    font-weight: 600;
     cursor: pointer;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
-    box-shadow: 0 10px 25px rgba(240, 62, 62, 0.25);
+    box-shadow: 0 4px 12px rgba(240, 62, 62, 0.25);
+    white-space: nowrap;
 }
 
 .reset-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 12px 28px rgba(240, 62, 62, 0.32);
+    box-shadow: 0 6px 16px rgba(240, 62, 62, 0.35);
 }
 
 .reset-btn:active {
     transform: translateY(0);
-    box-shadow: 0 6px 14px rgba(240, 62, 62, 0.2);
+    box-shadow: 0 2px 8px rgba(240, 62, 62, 0.2);
 }
 
 .ranking-table {
@@ -1503,52 +1715,93 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
 .pairing-toggle-btn { transition: transform 180ms ease, background 120ms ease; }
 .pairing-toggle-btn.collapsed { transform: rotate(180deg); }
 
-.filter-container {
+.ranking-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
     margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.ranking-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.download-btn {
+    background: linear-gradient(135deg, #4CA1AF 0%, #2C3E50 100%);
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 0.95em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 4px 12px rgba(76, 161, 175, 0.25);
+    white-space: nowrap;
+}
+
+.download-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(76, 161, 175, 0.35);
+}
+
+.download-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(76, 161, 175, 0.2);
+}
+
+.filter-container {
+    flex: 1;
+    min-width: 200px;
 }
 
 @media (max-width: 768px) {
     #battle-tab {
         position: relative;
-        padding: 10px 5px !important;
+        padding: 8px !important;
     }
 
     .battle-area {
         display: flex;
         justify-content: center;
         align-items: center;
-        padding: 5px;
+        padding: 0;
         position: relative;
         width: 100%;
+        min-height: calc(100vh - 300px);
     }
 
     .battle-container {
         flex-direction: row;
         flex-wrap: nowrap;
-        gap: 12px;
+        gap: 6px;
         justify-content: center;
-        align-items: stretch;
+        align-items: center;
         width: 100%;
         max-width: 100%;
+        max-height: calc(100vh - 300px);
         padding: 0;
         box-sizing: border-box;
         overflow: visible;
     }
 
-    .vs-divider {
-        display: flex;
-        width: 50px;
-        height: 50px;
-        font-size: 1.3em;
-        flex-shrink: 0;
-        box-shadow: 0 3px 15px rgba(0, 0, 0, 0.25), 0 0 0 5px rgba(255, 255, 255, 0.9);
+    .vs-overlay {
+        width: 63px;
+        height: 63px;
+        font-size: 1.5em;
+        box-shadow: 0 5px 18px rgba(0, 0, 0, 0.4), 0 0 0 5px rgba(255, 255, 255, 0.95);
+        letter-spacing: 2px;
     }
 
     .coaster-card {
         max-width: none;
         min-width: 0;
-        flex: 1 1 0;
-        width: 0;
+        flex: 1 1 calc(50% - 3px);
+        width: calc(50% - 3px);
         box-sizing: border-box;
         align-self: stretch;
         display: flex;
@@ -1559,32 +1812,37 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
         position: static;
         opacity: 1;
         border-radius: 20px 20px 0 0;
-        aspect-ratio: 1 / 1.6;
-        font-size: 1.5em;
+        aspect-ratio: 1 / 1.1;
+        font-size: 1.2em;
+        max-height: 50vh;
+        object-fit: cover;
     }
 
     .coaster-content {
         position: static;
-        padding: 16px;
+        padding: 8px 10px;
         min-height: auto;
+        flex-shrink: 0;
     }
 
     .coaster-rank-badge {
-        width: 36px;
-        height: 36px;
-        font-size: 0.85em;
-        top: 12px;
-        right: 12px;
+        width: 32px;
+        height: 32px;
+        font-size: 0.75em;
+        top: 8px;
+        right: 8px;
     }
 
     .coaster-name {
-        font-size: 1.1em;
+        font-size: 0.95em;
         text-shadow: none;
+        line-height: 1.2;
     }
 
     .coaster-subtitle {
-        font-size: 0.85em;
+        font-size: 0.75em;
         text-shadow: none;
+        line-height: 1.2;
     }
 
     .user-selector {
@@ -1678,27 +1936,6 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
     opacity:1;
     transform:translateX(-50%) scale(1.02);
 }
-
-/* Close fight intro banner */
-.close-banner{
-    position:fixed;
-    top:6%;
-    left:50%;
-    transform:translateX(-50%) translateY(-12px) scale(0.96);
-    padding:10px 22px;
-    border-radius:10px;
-    background: linear-gradient(90deg,#ff3f6e,#ff914d);
-    color: #fff;
-    font-weight:900;
-    letter-spacing:1px;
-    font-size:1.1rem;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(255,140,80,0.12) inset;
-    opacity:0;
-    transition: opacity 220ms ease, transform 300ms cubic-bezier(.2,.9,.3,1);
-    z-index:10020;
-    pointer-events:none;
-}
-.close-banner.show{ opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
 
 /* highlight cards when entering close fight */
 .coaster-card.close-highlight{ box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 2px 14px rgba(255,220,140,0.06); transform: translateY(-6px) scale(1.02); border-color: rgba(255,220,120,0.14); }
@@ -1832,58 +2069,57 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
 
 .achievement-filters {
     display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.04);
     flex-wrap: wrap;
-    justify-content: center;
-    gap: 12px;
-    padding: 20px 24px;
-    background: white;
-    border-bottom: 1px solid #e2e8f0;
+    margin: 20px 20px 20px 20px;
+}
+
+.achievement-counter {
+    font-size: 1.1em;
+    font-weight: 700;
+    color: #374151;
+    white-space: nowrap;
+}
+
+.filter-tags-container {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
 }
 
 .filter-tag {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 18px;
-    border: none;
-    border-radius: 24px;
-    background: #f1f5f9;
-    color: #64748b;
-    font-size: 14px;
-    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: transparent;
+    border: 1px solid #e6e6e6;
+    color: #374151;
+    font-weight: 700;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 160ms ease;
+    min-width: 80px;
+    text-align: center;
+    font-size: 14px;
     white-space: nowrap;
-    position: relative;
-    overflow: hidden;
-}
-
-.filter-tag::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(135deg, rgba(255,255,255,0.5), transparent);
-    opacity: 0;
-    transition: opacity 0.2s;
-}
-
-.filter-tag:hover::before {
-    opacity: 1;
 }
 
 .filter-tag:hover {
-    background: #e2e8f0;
     transform: translateY(-2px);
+    background: #f5f7fa;
 }
 
 .filter-tag.active {
+    background: linear-gradient(135deg, var(--app-accent) 0%, var(--app-dark) 100%);
     color: white;
+    border-color: transparent;
+    box-shadow: 0 8px 20px rgba(76,161,175,0.12);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-}
-
-.filter-tag.active::before {
-    opacity: 0;
 }
 
 /* All filter - neutral gradient */
@@ -1973,23 +2209,23 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
 
 .achievements-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 20px;
-    padding: 24px;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 16px;
+    padding: 0 20px 20px 20px;
 }
 
 @media (max-width: 600px) {
     .achievements-grid {
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-        gap: 12px;
-        padding: 16px;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 10px;
+        padding: 14px;
     }
 }
 
 .achievement-card {
     background: white;
-    border-radius: 16px;
-    padding: 20px;
+    border-radius: 14px;
+    padding: 16px;
     text-align: center;
     box-shadow: 0 4px 12px rgba(0,0,0,0.08);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1999,7 +2235,7 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 .achievement-card::before {
@@ -2034,9 +2270,9 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
 }
 
 .achievement-icon {
-    font-size: 3.5em;
+    font-size: 2.8em;
     line-height: 1;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
     filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
 }
 
@@ -2047,14 +2283,14 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
 
 .achievement-name {
     font-weight: 800;
-    font-size: 1.1em;
+    font-size: 0.95em;
     color: #111827;
     margin: 0;
     line-height: 1.3;
 }
 
 .achievement-desc {
-    font-size: 0.9em;
+    font-size: 0.8em;
     color: #6b7280;
     line-height: 1.4;
     margin: 0;
@@ -2067,12 +2303,16 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
 .achievement-card.locked .achievement-desc {
     color: transparent;
     user-select: none;
+    text-align: center;
+    width: 100%;
 }
 
 .achievement-card.locked .achievement-desc::before {
     content: '???';
     color: #d1d5db;
     font-weight: 600;
+    display: block;
+    text-align: center;
 }
 
 .achievement-date {
@@ -2233,3 +2473,628 @@ body.coaster-selected .history-filters .filter-btn { opacity: 1; pointer-events:
     }
 }
 
+/* ============================================
+   HOME TAB STYLES
+   ============================================ */
+
+.home-welcome {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.home-welcome h2 {
+    color: var(--app-accent);
+    font-size: 2.2em;
+    font-weight: 700;
+    margin: 0;
+}
+
+.home-card {
+    background: white;
+    border-radius: 12px;
+    padding: 22px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+}
+
+.home-card-full {
+    width: 100%;
+    min-height: auto;
+}
+
+.home-card-title {
+    font-size: 1.1em;
+    font-weight: 700;
+    color: var(--app-dark);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.home-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.home-grid-2col {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+/* Daily Quest Styles */
+.daily-quest {
+    padding: 8px 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.quest-description {
+    font-size: 0.95em;
+    color: #666;
+    margin-bottom: 12px;
+    font-weight: 500;
+}
+
+.quest-progress {
+    margin-top: 8px;
+}
+
+.quest-progress-bar {
+    width: 100%;
+    height: 10px;
+    background: #e5e7eb;
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.quest-progress-fill {
+    height: 100%;
+    background: linear-gradient(135deg, #4CA1AF 0%, #2C3E50 100%);
+    border-radius: 999px;
+    transition: width 0.3s ease;
+}
+
+.quest-text {
+    text-align: center;
+    font-weight: 700;
+    color: var(--app-accent);
+    font-size: 0.95em;
+}
+
+/* Top 3 Coasters Styles */
+.top-coasters {
+    min-height: 100px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.top-coaster-item {
+    display: flex;
+    align-items: center;
+    padding: 8px;
+    margin-bottom: 6px;
+    background: #f5f7fa;
+    border-radius: 6px;
+    transition: transform 0.2s ease;
+}
+
+.top-coaster-item:hover {
+    transform: translateX(3px);
+}
+
+.top-coaster-rank {
+    font-size: 1.3em;
+    font-weight: 700;
+    color: var(--app-accent);
+    margin-right: 10px;
+    min-width: 30px;
+}
+
+.top-coaster-rank.rank-1 { color: #f59e0b; }
+.top-coaster-rank.rank-2 { color: #9ca3af; }
+.top-coaster-rank.rank-3 { color: #cd7f32; }
+
+.top-coaster-info {
+    flex: 1;
+}
+
+.top-coaster-name {
+    font-weight: 700;
+    color: var(--app-dark);
+    font-size: 0.9em;
+    margin-bottom: 2px;
+}
+
+.top-coaster-elo {
+    font-size: 0.8em;
+    color: #666;
+}
+
+/* Achievement Summary Styles */
+.achievement-summary {
+    padding: 8px 0;
+    min-height: 100px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.achievement-count {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.achievement-count-big {
+    font-size: 2.2em;
+    font-weight: 700;
+    color: var(--app-accent);
+    line-height: 1;
+}
+
+.achievement-count-label {
+    font-size: 0.8em;
+    color: #666;
+    margin-top: 4px;
+}
+
+.recent-achievements {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.recent-achievement-icon {
+    font-size: 1.6em;
+    padding: 6px;
+    background: #f5f7fa;
+    border-radius: 6px;
+    transition: transform 0.2s ease;
+}
+
+.recent-achievement-icon:hover {
+    transform: scale(1.1);
+}
+
+/* Session Stats Styles */
+.session-stats {
+    padding: 8px 0;
+    display: flex;
+    gap: 8px;
+    flex: 1;
+    align-items: center;
+}
+
+.session-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 8px;
+    background: #f5f7fa;
+    border-radius: 6px;
+    flex: 1;
+}
+
+.session-stat-value {
+    font-size: 1.8em;
+    font-weight: 700;
+    color: var(--app-accent);
+    line-height: 1;
+}
+
+.session-stat-label {
+    font-size: 0.75em;
+    color: #666;
+    margin-top: 4px;
+    text-align: center;
+}
+
+/* Link Buttons */
+.home-link-btn {
+    width: 100%;
+    padding: 8px;
+    background: white;
+    border: 2px solid var(--app-accent);
+    color: var(--app-accent);
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-top: 10px;
+}
+
+.home-link-btn:hover {
+    background: var(--app-accent);
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(76, 161, 175, 0.3);
+}
+
+/* Action Button */
+.home-action {
+    text-align: center;
+    margin-top: 16px;
+    margin-bottom: 10px;
+}
+
+.home-action-btn {
+    padding: 12px 36px;
+    background: linear-gradient(135deg, #4CA1AF 0%, #2C3E50 100%);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.1em;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 6px 20px rgba(76, 161, 175, 0.4);
+}
+
+.home-action-btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(76, 161, 175, 0.5);
+}
+
+.home-action-btn:active {
+    transform: translateY(-1px);
+}
+
+/* Profile Reset Buttons */
+.profile-reset-container {
+    display: flex;
+    gap: 12px;
+    margin-top: 32px;
+}
+
+.profile-reset-btn {
+    flex: 1;
+    padding: 12px 20px;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    white-space: nowrap;
+}
+
+.profile-reset-ranking {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
+}
+
+.profile-reset-ranking:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(245, 158, 11, 0.35);
+}
+
+.profile-reset-ranking:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.2);
+}
+
+.profile-reset-all {
+    background: linear-gradient(135deg, #ff6b6b 0%, #f03e3e 100%);
+    box-shadow: 0 4px 12px rgba(240, 62, 62, 0.25);
+}
+
+.profile-reset-all:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(240, 62, 62, 0.35);
+}
+
+.profile-reset-all:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(240, 62, 62, 0.2);
+}
+
+/* Responsive Design for Home Tab */
+@media (max-width: 1024px) {
+    .home-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .home-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    
+    .home-grid-2col {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .home-welcome {
+        margin-bottom: 12px;
+    }
+
+    .home-welcome h2 {
+        font-size: 1.2em;
+        padding: 8px 20px;
+    }
+
+    .home-card {
+        padding: 12px;
+        margin-bottom: 10px;
+        min-height: 160px;
+    }
+
+    .home-card-title {
+        font-size: 0.95em;
+        margin-bottom: 8px;
+    }
+
+    .stats-summary {
+        padding: 8px;
+        gap: 8px;
+    }
+
+    .stat-item {
+        padding: 8px 6px;
+    }
+
+    .stat-value {
+        font-size: 1.3em;
+    }
+
+    .stat-label {
+        font-size: 0.7em;
+    }
+
+    .quest-description {
+        font-size: 0.85em;
+        margin-bottom: 8px;
+    }
+
+    .quest-text {
+        font-size: 0.85em;
+    }
+
+    .achievement-count-big {
+        font-size: 1.8em;
+    }
+
+    .achievement-count-label {
+        font-size: 0.75em;
+    }
+
+    .recent-achievement-icon {
+        font-size: 1.4em;
+        padding: 5px;
+    }
+
+    .session-stat-value {
+        font-size: 1.5em;
+    }
+
+    .session-stat-label {
+        font-size: 0.7em;
+    }
+
+    .top-coaster-item {
+        padding: 6px;
+        margin-bottom: 5px;
+    }
+
+    .top-coaster-rank {
+        font-size: 1.2em;
+        min-width: 28px;
+    }
+
+    .top-coaster-name {
+        font-size: 0.85em;
+    }
+
+    .top-coaster-elo {
+        font-size: 0.75em;
+    }
+
+    .home-link-btn {
+        padding: 6px;
+        font-size: 0.8em;
+        margin-top: 8px;
+    }
+
+    .home-action-btn {
+        width: 100%;
+        font-size: 0.95em;
+        padding: 10px 20px;
+    }
+}
+
+/* Custom Reset Modal */
+.custom-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+    align-items: center;
+    justify-content: center;
+}
+
+.custom-modal.show {
+    display: flex;
+}
+
+.modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+.modal-content {
+    position: relative;
+    background: white;
+    border-radius: 16px;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    animation: modalSlideIn 0.3s ease;
+    overflow: hidden;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    background: linear-gradient(135deg, #ff6b6b 0%, #f03e3e 100%);
+    color: white;
+    padding: 20px 24px;
+    border-bottom: 3px solid #e03131;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.4em;
+    font-weight: 700;
+}
+
+.modal-body {
+    padding: 24px;
+    color: #333;
+}
+
+.modal-body p {
+    margin: 0 0 16px 0;
+    font-size: 1em;
+    line-height: 1.5;
+}
+
+.modal-body strong {
+    color: #e03131;
+    font-weight: 700;
+}
+
+.modal-warning {
+    color: #666;
+    font-size: 0.95em;
+    margin-bottom: 12px;
+}
+
+.modal-warning-strong {
+    color: #e03131;
+    font-weight: 700;
+    font-size: 1.05em;
+    margin-top: 16px;
+    margin-bottom: 0;
+}
+
+.modal-info {
+    color: #4CA1AF;
+    font-weight: 600;
+    font-size: 0.95em;
+    margin: 12px 0;
+}
+
+.modal-header-warning {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    border-bottom: 3px solid #d97706;
+}
+
+.modal-list {
+    margin: 0 0 16px 0;
+    padding-left: 24px;
+    color: #555;
+}
+
+.modal-list li {
+    margin: 6px 0;
+    line-height: 1.4;
+}
+
+.modal-footer {
+    padding: 20px 24px;
+    background: #f8f9fa;
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    border-top: 1px solid #e9ecef;
+}
+
+.modal-btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.modal-btn-cancel {
+    background: #e9ecef;
+    color: #495057;
+}
+
+.modal-btn-cancel:hover {
+    background: #dee2e6;
+    transform: translateY(-1px);
+}
+
+.modal-btn-confirm {
+    background: linear-gradient(135deg, #ff6b6b 0%, #f03e3e 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(240, 62, 62, 0.3);
+}
+
+.modal-btn-confirm:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(240, 62, 62, 0.4);
+}
+
+.modal-btn-confirm:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(240, 62, 62, 0.2);
+}
+
+.modal-btn-confirm-warning {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+.modal-btn-confirm-warning:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(245, 158, 11, 0.4);
+}
+
+.modal-btn-confirm-warning:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.2);
+}

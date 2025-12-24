@@ -1,9 +1,4 @@
-// ============================================
-// ACHIEVEMENT SYSTEM
-// ============================================
-
 const ACHIEVEMENTS = {
-    // Battle achievements
     firstBlood: {
         id: 'firstBlood',
         name: 'First Blood',
@@ -52,6 +47,15 @@ const ACHIEVEMENTS = {
         category: 'battles',
         condition: (stats) => stats.totalBattles >= 1000
     },
+    tenThousandClub: {
+        id: 'tenThousandClub',
+        name: 'Ten Thousand Club',
+        description: 'Complete 10000 battles',
+        icon: '💎',
+        rarity: 'legendary',
+        category: 'battles',
+        condition: (stats) => stats.totalBattles >= 10000
+    },
     speedDemon: {
         id: 'speedDemon',
         name: 'Speed Demon',
@@ -95,6 +99,32 @@ const ACHIEVEMENTS = {
         condition: (stats) => stats.closeFights >= 25
     },
     
+    // Underdog victories
+    giantSlayer: {
+        id: 'giantSlayer',
+        name: 'Giant Slayer',
+        description: 'Win your first close fight as the underdog',
+        icon: '🗡️',
+        category: 'close-fights',
+        condition: (stats) => stats.underdogWins >= 1
+    },
+    upsetSpecialist: {
+        id: 'upsetSpecialist',
+        name: 'Upset Specialist',
+        description: 'Win 5 close fights as the underdog',
+        icon: '🎯',
+        category: 'close-fights',
+        condition: (stats) => stats.underdogWins >= 5
+    },
+    davidVsGoliath: {
+        id: 'davidVsGoliath',
+        name: 'David vs Goliath',
+        description: 'Win 10 close fights as the underdog',
+        icon: '🏹',
+        category: 'close-fights',
+        condition: (stats) => stats.underdogWins >= 10
+    },
+    
     // Ranking
     balancedJudge: {
         id: 'balancedJudge',
@@ -103,6 +133,24 @@ const ACHIEVEMENTS = {
         icon: '⚖️',
         category: 'ranking',
         condition: (stats) => stats.allCoastersMinBattles >= 5
+    },
+    fairArbitrator: {
+        id: 'fairArbitrator',
+        name: 'Fair Arbitrator',
+        description: 'Have all coasters with at least 10 battles',
+        icon: '⚗️',
+        rarity: 'rare',
+        category: 'ranking',
+        condition: (stats) => stats.allCoastersMinBattles >= 10
+    },
+    supremeJudicator: {
+        id: 'supremeJudicator',
+        name: 'Supreme Judicator',
+        description: 'Have all coasters with at least 25 battles',
+        icon: '👨‍⚖️',
+        rarity: 'epic',
+        category: 'ranking',
+        condition: (stats) => stats.allCoastersMinBattles >= 25
     },
     
     // Patterns
@@ -140,6 +188,24 @@ const ACHIEVEMENTS = {
         category: 'collection',
         condition: (stats) => stats.uniqueParks >= 10
     },
+    globeTrotter: {
+        id: 'globeTrotter',
+        name: 'Globe Trotter',
+        description: 'Have coasters from 25+ parks in battles',
+        icon: '🌏',
+        rarity: 'rare',
+        category: 'collection',
+        condition: (stats) => stats.uniqueParks >= 25
+    },
+    worldExplorer: {
+        id: 'worldExplorer',
+        name: 'World Explorer',
+        description: 'Have coasters from 50+ parks in battles',
+        icon: '🗺️',
+        rarity: 'epic',
+        category: 'collection',
+        condition: (stats) => stats.uniqueParks >= 50
+    },
     manufacturerExpert: {
         id: 'manufacturerExpert',
         name: 'Manufacturer Expert',
@@ -147,6 +213,24 @@ const ACHIEVEMENTS = {
         icon: '🏭',
         category: 'collection',
         condition: (stats) => stats.uniqueManufacturers >= 10
+    },
+    manufacturerConnoisseur: {
+        id: 'manufacturerConnoisseur',
+        name: 'Manufacturer Connoisseur',
+        description: 'Have coasters from 20+ manufacturers in battles',
+        icon: '⚙️',
+        rarity: 'rare',
+        category: 'collection',
+        condition: (stats) => stats.uniqueManufacturers >= 20
+    },
+    manufacturerMaster: {
+        id: 'manufacturerMaster',
+        name: 'Manufacturer Master',
+        description: 'Have coasters from 30+ manufacturers in battles',
+        icon: '🏗️',
+        rarity: 'epic',
+        category: 'collection',
+        condition: (stats) => stats.uniqueManufacturers >= 30
     },
     perfectMatch: {
         id: 'perfectMatch',
@@ -239,6 +323,24 @@ const ACHIEVEMENTS = {
         icon: '📅',
         category: 'special',
         condition: (stats) => stats.consecutiveDays >= 3
+    },
+    weekStreak: {
+        id: 'weekStreak',
+        name: 'Week Warrior',
+        description: 'Vote daily for 7 days in a row',
+        icon: '🗓️',
+        rarity: 'rare',
+        category: 'special',
+        condition: (stats) => stats.consecutiveDays >= 7
+    },
+    monthStreak: {
+        id: 'monthStreak',
+        name: 'Monthly Dedication',
+        description: 'Vote daily for 30 days in a row',
+        icon: '📆',
+        rarity: 'epic',
+        category: 'special',
+        condition: (stats) => stats.consecutiveDays >= 30
     }
 };
 
@@ -252,6 +354,8 @@ class AchievementManager {
         this.alternatingStreak = 0;
         this.lastCardPosition = null;
         this.closeFights = 0;
+        this.underdogWins = 0;
+        this.underdogWinStreak = 0;
         this.perfectMatches = 0;
         this.lastBattleDate = null;
         this.consecutiveDays = 1;
@@ -285,6 +389,8 @@ class AchievementManager {
                 this.alternatingStreak = stats.alternatingStreak || 0;
                 this.lastCardPosition = stats.lastCardPosition !== undefined ? stats.lastCardPosition : null;
                 this.closeFights = stats.closeFights || 0;
+                this.underdogWins = stats.underdogWins || 0;
+                this.underdogWinStreak = stats.underdogWinStreak || 0;
                 this.perfectMatches = stats.perfectMatches || 0;
                 this.lastBattleDate = stats.lastBattleDate || null;
                 this.consecutiveDays = stats.consecutiveDays || 1;
@@ -319,6 +425,8 @@ class AchievementManager {
                 lastCardPosition: this.lastCardPosition,
                 perfectMatches: this.perfectMatches,
                 closeFights: this.closeFights,
+                underdogWins: this.underdogWins,
+                underdogWinStreak: this.underdogWinStreak,
                 lastBattleDate: this.lastBattleDate,
                 consecutiveDays: this.consecutiveDays,
                 dailyBattleDates: [...this.dailyBattleDates],
@@ -384,8 +492,20 @@ class AchievementManager {
         return Object.keys(ACHIEVEMENTS).length;
     }
     
+    // Get recent achievements (sorted by unlock date, most recent first)
+    getRecentAchievements(count = 3) {
+        const unlocked = Array.from(this.unlockedAchievements.entries())
+            .map(([id, data]) => ({
+                ...ACHIEVEMENTS[id],
+                unlockedDate: data.unlockedDate
+            }))
+            .sort((a, b) => new Date(b.unlockedDate) - new Date(a.unlockedDate))
+            .slice(0, count);
+        return unlocked;
+    }
+    
     // Record a battle outcome for achievement tracking
-    recordBattle(cardPosition, perfectMatch, wasCloseFight, coasterA, coasterB) {
+    recordBattle(cardPosition, perfectMatch, wasCloseFight, coasterA, coasterB, underdogWon = false) {
         this.sessionBattles++;
         
         // Track alternating pattern
@@ -413,6 +533,17 @@ class AchievementManager {
         // Track close fights
         if (wasCloseFight) {
             this.closeFights++;
+            
+            // Track underdog victories in close fights
+            if (underdogWon) {
+                this.underdogWins++;
+                this.underdogWinStreak++;
+            } else {
+                this.underdogWinStreak = 0;
+            }
+        } else {
+            // Reset underdog streak if not a close fight
+            this.underdogWinStreak = 0;
         }
         
         // Track sibling battles

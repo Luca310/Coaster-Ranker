@@ -1,13 +1,13 @@
 // Coaster data - will be loaded from CSV files
     let coastersDataLuca = [];
     let coastersDataWouter = [];
+    
+    const CACHE_VERSION = 'v10-validated';
 
-    // Function to parse CSV data
     function parseCSV(csvText) {
         const lines = csvText.trim().split('\n');
         const data = [];
         
-        // Skip header line
         for (let i = 1; i < lines.length; i++) {
             const line = lines[i].trim();
             if (!line) continue;
@@ -26,7 +26,6 @@
         return data;
     }
 
-    // Load CSV files
     async function loadCoasterData() {
         try {
             const [lucaResponse, wouterResponse] = await Promise.all([
@@ -44,13 +43,10 @@
             coastersDataLuca = parseCSV(lucaText);
             coastersDataWouter = parseCSV(wouterText);
             
-            console.info(`Loaded coaster data: Luca=${coastersDataLuca.length}, Wouter=${coastersDataWouter.length}`);
-            
-            // Initialize the app after data is loaded
+            console.info(`Loaded: Luca=${coastersDataLuca.length}, Wouter=${coastersDataWouter.length}`);
             initializeApp();
         } catch (error) {
-            console.error('Error loading coaster data:', error);
-            console.error('Error details:', error.message);
+            console.error('Error loading data:', error.message);
             
             // Show a more helpful error message and offer a file-input fallback
             const errorDiv = document.createElement('div');
@@ -111,7 +107,7 @@
     }
 
     // Initialize app after data is loaded
-    function initializeApp() {
+    async function initializeApp() {
         // Check if there's a saved user preference
         const savedUser = localStorage.getItem('lastUser');
         if (savedUser && (savedUser === 'luca' || savedUser === 'wouter')) {
@@ -122,6 +118,24 @@
         setHeaderHeight();
         // Post-initialization UI adjustments
         postInitUISetup();
+        
+        // Load ALL images during loading screen before showing first battle
+        await preloadAllCoasterImages();
+        
+        // Now display the first battle (all images loaded)
+        displayBattle();
+        
+        // Restore the last active tab
+        try {
+            const savedTab = localStorage.getItem('lastActiveTab');
+            const validTabs = ['profile', 'home', 'battle', 'ranking', 'history', 'achievements'];
+            if (savedTab && validTabs.includes(savedTab)) {
+                switchTab(savedTab);
+            }
+        } catch (e) { /* ignore */ }
+        
+        // Match tab heights after initialization
+        setTimeout(() => matchTabHeights(), 100);
     }
 
     // Set header height CSS variable for sticky tabs positioning
@@ -146,23 +160,1917 @@
             try { if (!currentUser) setBattleVisibility(false); } catch (e) {}
             // Sync sim input width
             try { syncSimInputWidth(); } catch (e) {}
+            // Hide any close battle overlay that might be showing from previous session
+            try {
+                const overlay = document.getElementById('closeBattleOverlay');
+                if (overlay) {
+                    overlay.classList.remove('show');
+                    overlay.style.display = 'none';
+                }
+            } catch (e) {}
+            // Cancel any pending close intro animations
+            try { cancelCloseIntro(); } catch (e) {}
+            
+            // Safety mechanism: periodically check and hide overlay if it appears unexpectedly
+            setInterval(() => {
+                try {
+                    const overlay = document.getElementById('closeBattleOverlay');
+                    // Only hide if we're not currently in a battle resolution
+                    if (overlay && !resolvingBattle && !isProcessingChoice) {
+                        if (overlay.classList.contains('show') || overlay.style.display !== 'none') {
+                            overlay.classList.remove('show');
+                            overlay.style.display = 'none';
+                        }
+                    }
+                } catch (e) { /* ignore */ }
+            }, 500);
         } catch (e) {
             // swallow any unexpected errors to avoid breaking initialization
             console.warn('postInitUISetup error', e);
         }
     }
 
-// Utility: debounce function to reduce frequency of hot handlers
 function debounce(fn, wait = 120) {
-    let t = null;
+    let timeoutId = null;
     return (...args) => {
-        if (t) clearTimeout(t);
-        t = setTimeout(() => { t = null; fn(...args); }, wait);
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn(...args), wait);
     };
 }
 
-// Small DOM helper (convenience wrapper)
 const $id = (id) => document.getElementById(id);
+
+const CR_STORAGE_COUNTER = 'cr_rareBattleCounter';
+const CR_STORAGE_THRESHOLD = 'cr_rareBattleThreshold';
+
+function getCoasterId(c) { return (c && (c.naam || c.name || c.id)) || String(Math.random()); }
+function getCoasterName(c) { return (c && (c.naam || c.name)) || 'Coaster'; }
+
+// Global stats for image loading progress (visible in dev menu)
+let imageLoadStats = {
+    loaded: 0,
+    total: 0,
+    failed: 0,
+    cached: 0
+};
+
+// In-memory cache for super-fast image retrieval during rapid battles
+const imageMemoryCache = new Map();
+
+// Preload queue for background loading of next battles
+let preloadQueue = [];
+let isPreloading = false;
+let keyboardUsageDetected = false;
+const PRELOAD_QUEUE_SIZE_NORMAL = 3;
+const PRELOAD_QUEUE_SIZE_FAST = 6;
+
+// Normalize coaster/park name for cache key matching
+function normalizeCoasterName(name) {
+    if (!name) return '';
+    return name
+        .toLowerCase()
+        .trim()
+        .replace(/[^\w\s-]/g, '') // Remove special chars except hyphens
+        .replace(/\s+/g, ' ');     // Normalize whitespace
+}
+
+function getPlaceholderImage() {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250">
+        <defs>
+            <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#e5e7eb;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#d1d5db;stop-opacity:1" />
+            </linearGradient>
+        </defs>
+        <rect width="400" height="250" fill="url(#grad)"/>
+        <circle cx="200" cy="125" r="40" fill="#9ca3af" opacity="0.3"/>
+        <rect x="180" y="100" width="40" height="50" rx="5" fill="#9ca3af" opacity="0.5"/>
+    </svg>`;
+    // Use encodeURIComponent instead of btoa to handle all characters safely
+    return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
+async function queryWikidataImage(coasterName, parkName, manufacturer) {
+    if (!coasterName) return null;
+    
+    const escapeSPARQL = (str) => str.replace(/["\\]/g, '\\$&');
+    
+    // Roller coaster type validation - checks if entity is ANY type of roller coaster
+    // Q204832 = roller coaster (parent class), wdt:P279* = subclass of (transitive)
+    const coasterTypeFilter = `?item wdt:P31/wdt:P279* wd:Q204832 .`;
+    
+    // Generate name variants to try (most specific to least specific)
+    const nameVariants = [];
+    let cleanName = coasterName.trim().replace(/\s+/g, ' ');
+    nameVariants.push(cleanName);
+    
+    if (/\([^)]+\)/.test(cleanName)) {
+        const variant = cleanName.replace(/\s*\([^)]+\)\s*/g, ' ').trim();
+        if (variant && !nameVariants.includes(variant)) nameVariants.push(variant);
+    }
+    
+    if (/ - [A-Z][a-z]+$/.test(cleanName)) {
+        const variant = cleanName.replace(/ - [A-Z][a-z]+$/, '').trim();
+        if (!nameVariants.includes(variant)) nameVariants.push(variant);
+    }
+    
+    // 4. Remove descriptive suffixes after dash (e.g., "Colossos - Kampf der Giganten" → "Colossos")
+    if (/ - .+$/.test(cleanName) && cleanName.split(' - ').length === 2) {
+        const variant = cleanName.split(' - ')[0].trim();
+        if (!nameVariants.includes(variant)) nameVariants.push(variant);
+    }
+    
+    // 5. Remove subtitle after colon (e.g., "Xpress: Platform 13" → "Xpress")
+    if (/: .+$/.test(cleanName)) {
+        const variant = cleanName.split(':')[0].trim();
+        if (!nameVariants.includes(variant)) nameVariants.push(variant);
+    }
+    
+    // 6. Remove "Junior" or "Mini" prefix (e.g., "Junior Red Force" → "Red Force")
+    if (/^(Junior|Mini) /i.test(cleanName)) {
+        const variant = cleanName.replace(/^(Junior|Mini) /i, '').trim();
+        if (!nameVariants.includes(variant)) nameVariants.push(variant);
+    }
+    
+    // 7. Remove Dutch/German articles (e.g., "Joris en de draak" → "Joris draak")
+    if (/ en de /i.test(cleanName)) {
+        const variant = cleanName.replace(/ en de /ig, ' ').trim();
+        if (!nameVariants.includes(variant)) nameVariants.push(variant);
+        // Also try just first word (e.g., "Joris")
+        const firstWord = cleanName.split(' ')[0];
+        if (firstWord.length > 3 && !nameVariants.includes(firstWord)) {
+            nameVariants.push(firstWord);
+        }
+    }
+    
+    // 8. Remove possessive 's (e.g., "Winja's" → "Winja")
+    if (/'s\b/i.test(cleanName)) {
+        const variant = cleanName.replace(/'s\b/ig, '').trim();
+        if (!nameVariants.includes(variant)) nameVariants.push(variant);
+    }
+    
+    // NEW: 8b. Handle slash alternatives (e.g., "Superman / la Atracción" → "Superman")
+    if (/\s*\/\s*/.test(cleanName)) {
+        const parts = cleanName.split(/\s*\/\s*/);
+        // Add first part
+        if (parts[0] && !nameVariants.includes(parts[0].trim())) {
+            nameVariants.push(parts[0].trim());
+        }
+        // Add without slashes
+        const noSlash = cleanName.replace(/\s*\/\s*/g, ' ').trim();
+        if (!nameVariants.includes(noSlash)) {
+            nameVariants.push(noSlash);
+        }
+    }
+    
+    // NEW: 8c. Handle "&" and "and" variations
+    if (/\s+&\s+/.test(cleanName)) {
+        const withAnd = cleanName.replace(/\s+&\s+/g, ' and ');
+        if (!nameVariants.includes(withAnd)) nameVariants.push(withAnd);
+    }
+    if (/\s+and\s+/i.test(cleanName)) {
+        const withAmpersand = cleanName.replace(/\s+and\s+/gi, ' & ');
+        if (!nameVariants.includes(withAmpersand)) nameVariants.push(withAmpersand);
+    }
+    
+    // NEW: 8d. Handle umlauts and special characters
+    const deaccented = cleanName
+        .replace(/ä/g, 'a').replace(/Ä/g, 'A')
+        .replace(/ö/g, 'o').replace(/Ö/g, 'O')
+        .replace(/ü/g, 'u').replace(/Ü/g, 'U')
+        .replace(/ß/g, 'ss');
+    if (deaccented !== cleanName && !nameVariants.includes(deaccented)) {
+        nameVariants.push(deaccented);
+    }
+    
+    // 9. Remove generic "Roller Coaster" suffix in various languages
+    const genericSuffixes = [
+        / Roller Coaster$/i,
+        / Rollercoaster$/i,
+        / Achterbahn$/i,
+        / Coaster$/i
+    ];
+    for (const suffix of genericSuffixes) {
+        if (suffix.test(cleanName)) {
+            const variant = cleanName.replace(suffix, '').trim();
+            if (variant && !nameVariants.includes(variant)) nameVariants.push(variant);
+        }
+    }
+    
+    // 10. Remove "The" prefix (e.g., "The Ride" → "Ride")
+    if (/^The /i.test(cleanName) && cleanName.split(' ').length > 2) {
+        const variant = cleanName.replace(/^The /i, '').trim();
+        if (!nameVariants.includes(variant)) nameVariants.push(variant);
+    }
+    
+    // 11. Add space variations for compound names
+    if (cleanName.includes(' ') && cleanName.split(' ').length === 2) {
+        // Try without space (e.g., "Black Mamba" → "BlackMamba")
+        const noSpace = cleanName.replace(/ /g, '');
+        if (!nameVariants.includes(noSpace)) nameVariants.push(noSpace);
+    } else if (!cleanName.includes(' ') && cleanName.length > 6) {
+        // Try adding space for common patterns (e.g., "BlackMamba" → "Black Mamba")
+        const withSpace = cleanName.replace(/([a-z])([A-Z])/g, '$1 $2');
+        if (withSpace !== cleanName && !nameVariants.includes(withSpace)) {
+            nameVariants.push(withSpace);
+        }
+    }
+    
+    // Direct label/alias matching - much more reliable than EntitySearch
+    console.log(`  📝 Generated ${nameVariants.length} name variants:`, nameVariants.slice(0, 5).join(', ') + (nameVariants.length > 5 ? '...' : ''));
+    
+    // Helper to add delay between requests to avoid rate limiting
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    
+    // FAST PATH: Try park-aware search first (most accurate), then fallback to name-only
+    // This prevents wrong matches like "iSpeed" when searching for "Speed"
+    const variant = nameVariants[0];
+    const escapedName = escapeSPARQL(variant);
+    const escapedPark = escapeSPARQL(parkName);
+    
+    if (variant.length < 3) {
+        console.log(`✗ Name too short: "${variant}"`);
+        return null;
+    }
+    
+    // STRATEGY 1: Combined park + name query (most accurate, prevents wrong park matches)
+    console.log(`  🔍 Fast (Park-aware): "${variant}" at "${parkName}"`);
+    const parkAwareQuery = `
+        SELECT ?item ?image WHERE {
+          ?item rdfs:label ?itemLabel .
+          FILTER(CONTAINS(LCASE(?itemLabel), LCASE("${escapedName}")))
+          ${coasterTypeFilter}
+          ?item wdt:P18 ?image .
+          
+          ?item wdt:P127 ?park .
+          ?park rdfs:label ?parkLabel .
+          FILTER(CONTAINS(LCASE(?parkLabel), LCASE("${escapedPark}")))
+        }
+        LIMIT 1
+    `;
+    
+    try {
+        const result = await querySPARQL(parkAwareQuery);
+        if (result) {
+            console.log(`✓ Found "${coasterName}" with park verification`);
+            return result;
+        }
+    } catch (e) {
+        console.warn(`    ⚠️ Park-aware search failed: ${e.message}`);
+    }
+    
+    // STRATEGY 2: Fallback to name-only if park search failed
+    // (Some coasters might not have park data in Wikidata)
+    console.log(`  🔍 Fast (Name-only fallback): "${variant}"`);
+    const simpleQuery = `
+        SELECT ?item ?image WHERE {
+          ?item rdfs:label ?label .
+          FILTER(CONTAINS(LCASE(?label), LCASE("${escapedName}")))
+          ${coasterTypeFilter}
+          ?item wdt:P18 ?image .
+        }
+        LIMIT 1
+    `;
+    
+    try {
+        const result = await querySPARQL(simpleQuery);
+        if (result) {
+            console.log(`✓ Found "${coasterName}" (park not verified - may need retry)`);
+            return result;
+        }
+    } catch (e) {
+        console.warn(`    ⚠️ Fast search failed: ${e.message}`);
+    }
+    
+    console.log(`✗ No image found for "${coasterName}" (use retry button for intensive search)`);
+    return null;
+}
+
+// Wikidata EntitySearch API - finds entities by name (more forgiving than SPARQL)
+async function searchWikidataEntity(coasterName, validateType = true) {
+    if (!coasterName || coasterName.length < 3) return null;
+    
+    const searchUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(coasterName)}&language=en&limit=5&format=json&origin=*`;
+    
+    // Roller coaster parent class for validation
+    const rollerCoasterClassId = 'Q204832';
+    
+    try {
+        const response = await fetchWithTimeout(searchUrl, {}, 10000);
+        if (!response.ok) return null;
+        
+        const data = await response.json();
+        if (!data.search || data.search.length === 0) return null;
+        
+        // Check each result for an image
+        for (const entity of data.search) {
+            const entityId = entity.id;
+            
+            // Fetch entity data to check for image and type
+            const entityUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entityId}&props=claims&format=json&origin=*`;
+            const entityResponse = await fetchWithTimeout(entityUrl, {}, 10000);
+            if (!entityResponse.ok) continue;
+            
+            const entityData = await entityResponse.json();
+            const claims = entityData?.entities?.[entityId]?.claims;
+            
+            if (!claims) continue;
+            
+            // If validation required, check if it's a roller coaster
+            if (validateType && claims.P31) {
+                const instanceOfClaims = claims.P31;
+                // Check if entity is directly a roller coaster or any of its subclasses
+                const hasCoasterType = instanceOfClaims.some(claim => {
+                    const typeId = claim.mainsnak?.datavalue?.value?.id;
+                    return typeId === rollerCoasterClassId;
+                });
+                
+                // If not directly a roller coaster, check P279 (subclass of) chain
+                if (!hasCoasterType && claims.P279) {
+                    const subclassOfClaims = claims.P279;
+                    const isCoasterSubclass = subclassOfClaims.some(claim => {
+                        const parentId = claim.mainsnak?.datavalue?.value?.id;
+                        return parentId === rollerCoasterClassId;
+                    });
+                    
+                    if (!isCoasterSubclass) {
+                        console.log(`    ⚠️ EntitySearch: ${entity.label} is not a roller coaster, skipping`);
+                        continue;
+                    }
+                } else if (!hasCoasterType) {
+                    console.log(`    ⚠️ EntitySearch: ${entity.label} is not a roller coaster, skipping`);
+                    continue;
+                }
+            }
+            
+            // Check for image (P18 property)
+            if (claims.P18 && claims.P18.length > 0) {
+                const imageFile = claims.P18[0].mainsnak?.datavalue?.value;
+                if (imageFile) {
+                    // Convert Commons filename to URL
+                    const imageUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(imageFile)}`;
+                    return imageUrl;
+                }
+            }
+        }
+        
+        return null;
+    } catch (error) {
+        console.warn('EntitySearch error:', error.message);
+        return null;
+    }
+}
+
+// Intensive image search with park/manufacturer verification (triggered by retry button)
+async function intensiveImageSearch(coasterName, parkName, manufacturer) {
+    console.log(`\n🔬 INTENSIVE SEARCH for "${coasterName}" at ${parkName}...`);
+    
+    const escapeSPARQL = (str) => str.replace(/["\\]/g, '\\$&');
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    
+    // Roller coaster type validation
+    const coasterTypeFilter = `?item wdt:P31/wdt:P279* wd:Q204832 .`;
+    
+    // Generate all name variants (not just first 3)
+    const nameVariants = [];
+    let cleanName = coasterName.trim().replace(/\s+/g, ' ');
+    
+    nameVariants.push(cleanName);
+    
+    if (cleanName.includes('(')) {
+        nameVariants.push(cleanName.replace(/\s*\([^)]*\)/g, ''));
+    }
+    if (cleanName.includes(' - ')) {
+        nameVariants.push(cleanName.split(' - ')[0].trim());
+    }
+    if (cleanName.includes(':')) {
+        nameVariants.push(cleanName.split(':')[0].trim());
+    }
+    
+    console.log(`  📝 Trying ${nameVariants.length} variants with park filtering...`);
+    
+    // Strategy: CONTAINS with park verification
+    for (const variant of nameVariants) {
+        const escapedName = escapeSPARQL(variant);
+        const escapedPark = escapeSPARQL(parkName);
+        
+        if (variant.length < 3) continue;
+        
+        console.log(`  🔍 Searching "${variant}" with park context...`);
+        
+        // Query with park and manufacturer metadata
+        const query = `
+            SELECT ?item ?image ?itemLabel ?parkLabel ?mfgLabel WHERE {
+              ?item rdfs:label ?label .
+              FILTER(CONTAINS(LCASE(?label), LCASE("${escapedName}")))
+              ${coasterTypeFilter}
+              ?item wdt:P18 ?image .
+              
+              OPTIONAL { 
+                ?item wdt:P127 ?park . 
+                ?park rdfs:label ?parkLabel . 
+                FILTER(lang(?parkLabel) = "en" || lang(?parkLabel) = "de")
+              }
+              OPTIONAL { 
+                ?item wdt:P176 ?mfg . 
+                ?mfg rdfs:label ?mfgLabel . 
+                FILTER(lang(?mfgLabel) = "en")
+              }
+              ?item rdfs:label ?itemLabel . 
+              FILTER(lang(?itemLabel) = "en" || lang(?itemLabel) = "de")
+            }
+            LIMIT 5
+        `;
+        
+        try {
+            const results = await querySPARQLMultiple(query);
+            
+            if (results && results.length > 0) {
+                console.log(`  ✓ Found ${results.length} candidates`);
+                
+                // Try to find best match based on park
+                for (const result of results) {
+                    const itemLabel = result.itemLabel?.value || '';
+                    const parkLabel = result.parkLabel?.value || '';
+                    const mfgLabel = result.mfgLabel?.value || '';
+                    const imageUrl = result.image?.value;
+                    
+                    console.log(`    Candidate: ${itemLabel} at ${parkLabel || '(unknown)'} by ${mfgLabel || '(unknown)'}`);
+                    
+                    // Check if park matches
+                    const parkMatches = parkLabel && (
+                        parkLabel.toLowerCase().includes(parkName.toLowerCase()) ||
+                        parkName.toLowerCase().includes(parkLabel.toLowerCase())
+                    );
+                    
+                    if (parkMatches) {
+                        console.log(`    ✅ Park match! Using this result.`);
+                        
+                        if (imageUrl) {
+                            const finalUrl = imageUrl.startsWith('http://') 
+                                ? imageUrl.replace('http://', 'https://') 
+                                : imageUrl;
+                            
+                            return {
+                                url: finalUrl,
+                                metadata: {
+                                    name: itemLabel,
+                                    park: parkLabel,
+                                    manufacturer: mfgLabel,
+                                    verified: true
+                                }
+                            };
+                        }
+                    }
+                }
+                
+                // If no park match, use first result but mark as unverified
+                const firstResult = results[0];
+                const imageUrl = firstResult.image?.value;
+                
+                if (imageUrl) {
+                    console.log(`    ⚠️ Using first result (park not verified)`);
+                    const finalUrl = imageUrl.startsWith('http://') 
+                        ? imageUrl.replace('http://', 'https://') 
+                        : imageUrl;
+                    
+                    return {
+                        url: finalUrl,
+                        metadata: {
+                            name: firstResult.itemLabel?.value || '',
+                            park: firstResult.parkLabel?.value || '',
+                            manufacturer: firstResult.mfgLabel?.value || '',
+                            verified: false
+                        }
+                    };
+                }
+            }
+            
+            await delay(200);
+        } catch (e) {
+            console.warn(`    ⚠️ Query failed: ${e.message}`);
+            await delay(200);
+        }
+    }
+    
+    console.log(`  ✗ No image found after intensive search`);
+    return null;
+}
+
+// Query SPARQL endpoint and return multiple results
+async function querySPARQLMultiple(query, timeoutMs = 20000) {
+    const url = 'https://query.wikidata.org/sparql';
+    const fullUrl = `${url}?query=${encodeURIComponent(query)}&format=json`;
+    
+    try {
+        const response = await fetchWithTimeout(fullUrl, {
+            headers: {
+                'Accept': 'application/sparql-results+json',
+                'User-Agent': 'CoasterRanker/1.0 (Educational Project)'
+            }
+        }, timeoutMs);
+        
+        if (!response.ok) {
+            if (response.status === 429) {
+                throw new Error('429 Rate limit');
+            }
+            return null;
+        }
+        
+        const data = await response.json();
+        return data?.results?.bindings || null;
+    } catch (error) {
+        console.error('SPARQL query error:', error);
+        return null;
+    }
+}
+
+// Track retry attempts per coaster
+const retryAttempts = new Map();
+
+// Retry button handler (called from dev-data overlay)
+window.retryCoasterImage = async function(coasterName, parkName, manufacturer, elementId, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    
+    const button = event ? event.target : null;
+    const infoDiv = document.getElementById(`imageInfo_${elementId}`);
+    
+    const attemptKey = normalizeCoasterName(coasterName);
+    const currentAttempt = retryAttempts.get(attemptKey) || 0;
+    retryAttempts.set(attemptKey, currentAttempt + 1);
+    
+    if (button) {
+        button.disabled = true;
+        button.textContent = '⏳ Searching...';
+    }
+    
+    if (infoDiv) {
+        infoDiv.textContent = 'Searching...';
+        infoDiv.style.color = '#ffffff';
+    }
+    
+    try {
+        const allResults = await intensiveImageSearch(coasterName, parkName, manufacturer, true);
+        
+        let result = null;
+        if (allResults && allResults.length > 0) {
+            if (currentAttempt < allResults.length) {
+                result = allResults[currentAttempt];
+            } else {
+                retryAttempts.set(attemptKey, 0);
+                result = null;
+            }
+        }
+        
+        if (result && result.url) {
+            const normalizedName = normalizeCoasterName(coasterName);
+            const normalizedPark = normalizeCoasterName(parkName);
+            const cacheKey = `coasterImage_${CACHE_VERSION}_${normalizedName}_${normalizedPark}`;
+            localStorage.setItem(cacheKey, result.url);
+            
+            const cards = document.querySelectorAll('.coaster-card');
+            cards.forEach(card => {
+                const nameEl = card.querySelector('.coaster-name');
+                const cardName = nameEl?.textContent;
+                if (nameEl && nameEl.textContent === coasterName) {
+                    const img = card.querySelector('.coaster-img');
+                    if (img) {
+                        const oldSrc = img.src;
+                        img.src = result.url;
+                    }
+                }
+            });
+            
+            // Display verification result
+            if (infoDiv) {
+                const icon = result.metadata.verified ? '✓✓' : (result.metadata.parkMatch || result.metadata.mfgMatch ? '✓' : '⚠️');
+                const parkInfo = parkName ? `in ${parkName}` : '';
+                const imageNum = allResults?.length > 1 ? ` [${currentAttempt + 1}/${allResults.length}]` : '';
+                
+                infoDiv.innerHTML = `${icon} ${result.metadata.name} ${parkInfo}${imageNum}`;
+                infoDiv.style.color = result.metadata.verified ? '#10b981' : (result.metadata.parkMatch || result.metadata.mfgMatch ? '#ffffff' : '#ef4444');
+                
+                // Add warning for park mismatch only
+                if (!result.metadata.parkMatch && result.metadata.park) {
+                    infoDiv.innerHTML += `<br><span style="font-size:0.8em;color:#ef4444;">⚠️ Expected park: ${parkName}</span>`;
+                }
+                
+                // Show that image is saved
+                infoDiv.innerHTML += `<br><span style="font-size:0.8em;color:#6b7280;">💾 Saved - will persist in future battles</span>`;
+            }
+            
+            if (button) {
+                button.textContent = '✓ Updated';
+                setTimeout(() => {
+                    button.textContent = '🔄 Retry Image';
+                    button.disabled = false;
+                }, 2000);
+            }
+            
+            console.log('  ✓ Retry complete!');
+        } else {
+            const placeholderUrl = getPlaceholderImage();
+            
+            const normalizedName = normalizeCoasterName(coasterName);
+            const normalizedPark = normalizeCoasterName(parkName);
+            const cacheKey = `coasterImage_${CACHE_VERSION}_${normalizedName}_${normalizedPark}`;
+            localStorage.setItem(cacheKey, placeholderUrl);
+            
+            const cards = document.querySelectorAll('.coaster-card');
+            cards.forEach(card => {
+                const nameEl = card.querySelector('.coaster-name');
+                if (nameEl && nameEl.textContent === coasterName) {
+                    const img = card.querySelector('.coaster-img');
+                    if (img) img.src = placeholderUrl;
+                }
+            });
+            
+            if (infoDiv) {
+                const message = allResults?.length > 0 ? `All ${allResults.length} images tried` : 'No image found';
+                infoDiv.textContent = `🔄 ${message} - Using placeholder`;
+                infoDiv.style.color = '#ffffff';
+            }
+            if (button) {
+                button.textContent = '🔄 Try Again';
+                button.disabled = false;
+            }
+        }
+    } catch (error) {
+        console.error('Retry image error:', error);
+        if (infoDiv) {
+            infoDiv.textContent = '✗ Search failed';
+            infoDiv.style.color = '#ef4444';
+        }
+        if (button) {
+            button.textContent = '✗ Error';
+            setTimeout(() => {
+                button.textContent = '🔄 Retry Image';
+                button.disabled = false;
+            }, 2000);
+        }
+    }
+};
+
+// Intensive image search with park/manufacturer verification (triggered by retry button)
+async function intensiveImageSearch(coasterName, parkName, manufacturer, returnAll = false) {
+    
+    const escapeSPARQL = (str) => str.replace(/["\\]/g, '\\$&');
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    
+    // Roller coaster type validation
+    const coasterTypeFilter = `?item wdt:P31/wdt:P279* wd:Q204832 .`;
+    
+    // Collection for all found results when returnAll=true
+    const allFoundMatches = [];
+    
+    // Helper function to process results with scoring (defined early for use in all strategies)
+    const processResults = (results, strategy) => {
+        if (!results || results.length === 0) return returnAll ? [] : null;
+        
+        console.log(`  ✓ ${strategy}: Found ${results.length} candidates`);
+        
+        // If returnAll is true, collect all valid results
+        if (returnAll) {
+            const allMatches = [];
+            const seenUrls = new Set(); // Track URLs to avoid duplicates
+            
+            for (const result of results) {
+                const itemLabel = result.itemLabel?.value || '';
+                const parkLabel = result.parkLabel?.value || '';
+                const mfgLabel = result.mfgLabel?.value || '';
+                const imageUrl = result.image?.value;
+                
+                if (!imageUrl) continue; // Skip results without images
+                
+                // Normalize URL and check for duplicates
+                const normalizedUrl = imageUrl.startsWith('http://') ? imageUrl.replace('http://', 'https://') : imageUrl;
+                if (seenUrls.has(normalizedUrl)) {
+                    console.log(`    ⏭️ Skipping duplicate image`);
+                    continue;
+                }
+                seenUrls.add(normalizedUrl);
+                
+                console.log(`    Candidate: ${itemLabel} at ${parkLabel || '(unknown)'} by ${mfgLabel || '(unknown)'}`);
+                
+                const parkMatches = parkLabel && (
+                    parkLabel.toLowerCase().includes(parkName.toLowerCase()) ||
+                    parkName.toLowerCase().includes(parkLabel.toLowerCase())
+                );
+                
+                const mfgMatches = mfgLabel && manufacturer && (
+                    mfgLabel.toLowerCase().includes(manufacturer.toLowerCase()) ||
+                    manufacturer.toLowerCase().includes(mfgLabel.toLowerCase())
+                );
+                
+                // Calculate match score - PRIORITIZE PARK MATCHES
+                let score = 0;
+                let qualityLabel = '';
+                if (parkMatches && mfgMatches) {
+                    score = 100;
+                    qualityLabel = 'PERFECT MATCH';
+                    console.log(`    ✅✅ PERFECT MATCH!`);
+                } else if (parkMatches) {
+                    score = 50;
+                    qualityLabel = 'PARK VERIFIED';
+                    console.log(`    ✅ Park verified`);
+                } else if (mfgMatches) {
+                    score = 1;
+                    qualityLabel = 'MFG ONLY';
+                    console.log(`    ⚠️ Manufacturer only`);
+                } else {
+                    score = 0;
+                    qualityLabel = 'UNVERIFIED';
+                }
+                
+                allMatches.push({
+                    url: normalizedUrl,
+                    metadata: {
+                        name: itemLabel,
+                        park: parkLabel,
+                        manufacturer: mfgLabel,
+                        verified: score === 100,
+                        parkMatch: parkMatches,
+                        mfgMatch: mfgMatches,
+                        qualityLabel: qualityLabel
+                    },
+                    score: score
+                });
+            }
+            
+            // Sort by score (best first)
+            allMatches.sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                const aParkLen = a.metadata.park?.length || 999;
+                const bParkLen = b.metadata.park?.length || 999;
+                return aParkLen - bParkLen;
+            });
+            
+            console.log(`  📊 Sorted results: ${allMatches.map(m => `${m.metadata.qualityLabel} (${m.score})`).join(', ')}`);
+            return allMatches;
+        }
+        
+        // Original logic for returning single best match (when returnAll=false)
+        let bestMatch = null;
+        let bestScore = 0;
+        
+        for (const result of results) {
+            const itemLabel = result.itemLabel?.value || '';
+            const parkLabel = result.parkLabel?.value || '';
+            const mfgLabel = result.mfgLabel?.value || '';
+            const imageUrl = result.image?.value;
+            
+            console.log(`    Candidate: ${itemLabel} at ${parkLabel || '(unknown)'} by ${mfgLabel || '(unknown)'}`);
+            
+            const parkMatches = parkLabel && (
+                parkLabel.toLowerCase().includes(parkName.toLowerCase()) ||
+                parkName.toLowerCase().includes(parkLabel.toLowerCase())
+            );
+            
+            const mfgMatches = mfgLabel && manufacturer && (
+                mfgLabel.toLowerCase().includes(manufacturer.toLowerCase()) ||
+                manufacturer.toLowerCase().includes(mfgLabel.toLowerCase())
+            );
+            
+            // Calculate match score
+            let score = 0;
+            if (parkMatches && mfgMatches) {
+                score = 100;
+                console.log(`    ✅✅ PERFECT MATCH!`);
+            } else if (parkMatches) {
+                score = 50;
+                console.log(`    ✅ Park verified`);
+            } else if (mfgMatches) {
+                score = 1;
+                console.log(`    ⚠️ Manufacturer only`);
+            }
+            
+            if (score > bestScore && imageUrl) {
+                bestScore = score;
+                bestMatch = {
+                    url: imageUrl.startsWith('http://') ? imageUrl.replace('http://', 'https://') : imageUrl,
+                    metadata: {
+                        name: itemLabel,
+                        park: parkLabel,
+                        manufacturer: mfgLabel,
+                        verified: score === 100,
+                        parkMatch: parkMatches,
+                        mfgMatch: mfgMatches
+                    }
+                };
+                
+                // Return immediately on perfect match
+                if (score === 100) {
+                    console.log(`    🎯 Using perfect match!`);
+                    return bestMatch;
+                }
+            }
+        }
+        
+        // Use first result if no matches
+        if (!bestMatch && results[0]?.image?.value) {
+            const firstResult = results[0];
+            const imageUrl = firstResult.image.value;
+            bestMatch = {
+                url: imageUrl.startsWith('http://') ? imageUrl.replace('http://', 'https://') : imageUrl,
+                metadata: {
+                    name: firstResult.itemLabel?.value || '',
+                    park: firstResult.parkLabel?.value || '',
+                    manufacturer: firstResult.mfgLabel?.value || '',
+                    verified: false,
+                    parkMatch: false,
+                    mfgMatch: false
+                }
+            };
+            console.log(`    ⚠️ Using first result (unverified)`);
+        }
+        
+        return bestMatch;
+    };
+    
+    // STRATEGY 0: Combined Park+Name query (HIGHEST PRIORITY - most accurate)
+    console.log(`  🎯 STRATEGY 0: Combined Park+Name filter (most accurate)`);
+    
+    // Generate SMART basic name variants for Strategy 0 (avoid over-generation)
+    const basicVariants = new Set();
+    let cleanName = coasterName.trim().replace(/\s+/g, ' ');
+    basicVariants.add(cleanName);
+    
+    // First try with just the basic name
+    let foundBasicResults = false;
+    
+    for (const nameVariant of Array.from(basicVariants).slice(0, 3)) { // Max 3 variants for Strategy 0
+        console.log(`  🔍 COMBINED: "${nameVariant}" + "${parkName}"`);
+        
+        const combinedQuery = `
+            SELECT ?item ?image ?itemLabel ?parkLabel ?mfgLabel WHERE {
+              ?item rdfs:label ?itemLabel .
+              FILTER(CONTAINS(LCASE(?itemLabel), LCASE("${escapeSPARQL(nameVariant)}")))
+              
+              ${coasterTypeFilter}
+              ?item wdt:P18 ?image .
+              
+              ?item wdt:P127 ?park .
+              ?park rdfs:label ?parkLabel .
+              FILTER(CONTAINS(LCASE(?parkLabel), LCASE("${escapeSPARQL(parkName)}")))
+              
+              OPTIONAL { 
+                ?item wdt:P176 ?mfg . 
+                ?mfg rdfs:label ?mfgLabel . 
+                FILTER(lang(?mfgLabel) = "en")
+              }
+            }
+            LIMIT 10
+        `;
+        
+        try {
+            const results = await querySPARQLMultiple(combinedQuery, 15000);
+            console.log(`    📊 Combined query results: ${results?.length || 0}`);
+            
+            if (results && results.length > 0) {
+                const match = processResults(results, 'COMBINED');
+                if (returnAll && Array.isArray(match) && match.length > 0) {
+                    allFoundMatches.push(...match);
+                    foundBasicResults = true;
+                    console.log(`    ✓ COMBINED found ${match.length} results`);
+                } else if (!returnAll && match) {
+                    console.log(`    🎯 COMBINED found best match!`);
+                    return match;
+                }
+            }
+            await delay(200);
+        } catch (e) {
+            console.warn(`    ⚠️ COMBINED failed: ${e.message}`);
+            await delay(200);
+        }
+    }
+    
+    // Only try accent variants if no basic results found
+    if (!foundBasicResults && returnAll) {
+        console.log(`  🔤 No results from basic search, trying accent variants...`);
+        
+        // Simplify first (remove punctuation) - often helps
+        const simplified = cleanName.replace(/[']/g, '').replace(/ - /g, ' ').trim();
+        if (simplified !== cleanName && simplified.length >= 3) {
+            basicVariants.add(simplified);
+        }
+        
+        // Only use KNOWN accent substitutions (not random combinations)
+        const knownAccentMap = {
+            'fenix': 'Fénix',
+            'phoenix': 'Fénix',
+            'geforce': 'G-Force',
+            'baron': 'Baron 1898',
+            'joris': 'Joris en de Draak'
+        };
+        
+        const lowerName = cleanName.toLowerCase();
+        for (const [from, to] of Object.entries(knownAccentMap)) {
+            if (lowerName.includes(from)) {
+                basicVariants.add(to);
+            }
+        }
+        
+        // Try accent variants (skip first one as it was already tried)
+        for (const nameVariant of Array.from(basicVariants).slice(1, 3)) {
+            console.log(`  🔍 COMBINED VARIANT: "${nameVariant}" + "${parkName}"`);
+            
+            const combinedQuery = `
+                SELECT ?item ?image ?itemLabel ?parkLabel ?mfgLabel WHERE {
+                  ?item rdfs:label ?itemLabel .
+                  FILTER(CONTAINS(LCASE(?itemLabel), LCASE("${escapeSPARQL(nameVariant)}")))
+                  
+                  ${coasterTypeFilter}
+                  ?item wdt:P18 ?image .
+                  
+                  ?item wdt:P127 ?park .
+                  ?park rdfs:label ?parkLabel .
+                  FILTER(CONTAINS(LCASE(?parkLabel), LCASE("${escapeSPARQL(parkName)}")))
+                  
+                  OPTIONAL { 
+                    ?item wdt:P176 ?mfg . 
+                    ?mfg rdfs:label ?mfgLabel . 
+                    FILTER(lang(?mfgLabel) = "en")
+                  }
+                }
+                LIMIT 10
+            `;
+            
+            try {
+                const results = await querySPARQLMultiple(combinedQuery, 15000);
+                console.log(`    📊 Combined variant query results: ${results?.length || 0}`);
+                
+                if (results && results.length > 0) {
+                    const match = processResults(results, 'COMBINED');
+                    if (Array.isArray(match) && match.length > 0) {
+                        allFoundMatches.push(...match);
+                        console.log(`    ✓ COMBINED VARIANT found ${match.length} results`);
+                    }
+                }
+                await delay(200);
+            } catch (e) {
+                console.warn(`    ⚠️ COMBINED VARIANT failed: ${e.message}`);
+                await delay(200);
+            }
+        }
+    } else if (foundBasicResults) {
+        console.log(`  ⚡ Basic search found results, skipping accent variants for speed`);
+    }
+    
+    // If combined search succeeded and returnAll, we can return early
+    if (returnAll && allFoundMatches.length >= 3) {
+        console.log(`  ✓ Strategy 0 found ${allFoundMatches.length} good matches, skipping other strategies`);
+        // Still deduplicate and sort
+        const uniqueMatches = [];
+        const seenUrls = new Set();
+        for (const match of allFoundMatches) {
+            if (!seenUrls.has(match.url)) {
+                seenUrls.add(match.url);
+                uniqueMatches.push(match);
+            }
+        }
+        uniqueMatches.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            const aParkLen = a.metadata.park?.length || 999;
+            const bParkLen = b.metadata.park?.length || 999;
+            return aParkLen - bParkLen;
+        });
+        return uniqueMatches;
+    }
+    
+    // Continue with original strategies if Strategy 0 didn't find enough
+    console.log(`  📝 Strategy 0 found ${allFoundMatches.length} results, continuing with fallback strategies...`);
+    
+    // Generate smart name variants and deduplicate
+    const nameVariants = new Set();
+    cleanName = coasterName.trim().replace(/\s+/g, ' ');
+    
+    nameVariants.add(cleanName);
+    
+    // Remove parentheses (e.g., "Crazy Bats (VR)" → "Crazy Bats")
+    if (cleanName.includes('(')) {
+        nameVariants.add(cleanName.replace(/\s*\([^)]*\)/g, '').trim());
+    }
+    
+    // Remove subtitle after dash (e.g., "Colossos - Kampf" → "Colossos")
+    if (cleanName.includes(' - ')) {
+        nameVariants.add(cleanName.split(' - ')[0].trim());
+    }
+    
+    // Remove subtitle after colon (e.g., "Xpress: Platform 13" → "Xpress")
+    if (cleanName.includes(':')) {
+        nameVariants.add(cleanName.split(':')[0].trim());
+    }
+    
+    // Remove "Der/Die/Das" German articles (e.g., "Der Schwur des Kärnan" → "Schwur des Kärnan")
+    if (/^(Der|Die|Das) /i.test(cleanName)) {
+        nameVariants.add(cleanName.replace(/^(Der|Die|Das) /i, '').trim());
+    }
+    
+    // Remove "The" English article (e.g., "The Smiler" → "Smiler")
+    if (/^The /i.test(cleanName)) {
+        nameVariants.add(cleanName.replace(/^The /i, '').trim());
+    }
+    
+    // Remove hyphens (e.g., "Hals-über-Kopf" → "Hals uber Kopf")
+    if (cleanName.includes('-')) {
+        nameVariants.add(cleanName.replace(/-/g, ' ').trim());
+    }
+    
+    // Remove apostrophes (e.g., "Winja's" → "Winjas")
+    if (cleanName.includes("'")) {
+        nameVariants.add(cleanName.replace(/'/g, '').trim());
+    }
+    
+    // Try without special characters/accents (e.g., "Köln" → "Koln", "über" → "uber")
+    const normalized = cleanName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (normalized !== cleanName) {
+        nameVariants.add(normalized);
+    }
+    
+    // Try common English/German spellings (e.g., "ü" → "ue", "ö" → "oe", "ä" → "ae")
+    const germanized = cleanName
+        .replace(/ü/g, 'ue')
+        .replace(/ö/g, 'oe')
+        .replace(/ä/g, 'ae')
+        .replace(/ß/g, 'ss')
+        .replace(/Ü/g, 'Ue')
+        .replace(/Ö/g, 'Oe')
+        .replace(/Ä/g, 'Ae');
+    if (germanized !== cleanName) {
+        nameVariants.add(germanized);
+    }
+    
+    // REMOVED: Random accent generation - too many useless variants
+    // Only use known substitutions below
+    
+    // Common name variations (TARGETED - only known coasters)
+    const nameSubstitutions = {
+        'fenix': 'Fénix',
+        'phoenix': 'Fénix',
+        'geforce': 'G-Force',
+        'baron': 'Baron 1898'
+    };
+    
+    const lowerCleanName = cleanName.toLowerCase();
+    for (const [from, to] of Object.entries(nameSubstitutions)) {
+        if (lowerCleanName === from || lowerCleanName.includes(from)) {
+            const replaced = cleanName.replace(new RegExp(from, 'gi'), to);
+            if (replaced !== cleanName && replaced.length >= 3) {
+                nameVariants.add(replaced);
+            }
+        }
+    }
+    
+    // Convert to array and filter out short names (< 3 chars)
+    const variants = Array.from(nameVariants).filter(v => v.length >= 3);
+    
+    console.log(`  📝 Generated ${variants.length} additional name variants for fallback:`, variants);
+    console.log(`  🎯 Fallback Strategies: CONTAINS (all langs), EXACT (multi-lang), RELAXED (no type filter)`);
+    
+    // Strategy 1: CONTAINS search (all languages automatically)
+    for (const variant of variants) {
+        const escapedName = escapeSPARQL(variant);
+        console.log(`  🔍 CONTAINS: "${variant}"`);
+        
+        const containsQuery = `
+            SELECT ?item ?image ?itemLabel ?parkLabel ?mfgLabel WHERE {
+              ?item rdfs:label ?label .
+              FILTER(CONTAINS(LCASE(?label), LCASE("${escapedName}")))
+              ${coasterTypeFilter}
+              ?item wdt:P18 ?image .
+              OPTIONAL { 
+                ?item wdt:P127 ?park . 
+                ?park rdfs:label ?parkLabel . 
+                FILTER(lang(?parkLabel) = "en")
+              }
+              OPTIONAL { 
+                ?item wdt:P176 ?mfg . 
+                ?mfg rdfs:label ?mfgLabel . 
+                FILTER(lang(?mfgLabel) = "en")
+              }
+              ?item rdfs:label ?itemLabel . 
+              FILTER(lang(?itemLabel) = "en")
+            }
+            LIMIT 10
+        `;
+        
+        try {
+            const results = await querySPARQLMultiple(containsQuery);
+            console.log(`    📊 Raw results count: ${results?.length || 0}`);
+            if (results && results.length > 0) {
+                console.log(`    📸 First result has image: ${!!results[0]?.image?.value}`);
+                if (results[0]?.image?.value) {
+                    console.log(`    🔗 Image URL: ${results[0].image.value}`);
+                }
+            }
+            const match = processResults(results, 'CONTAINS');
+            if (returnAll && Array.isArray(match) && match.length > 0) {
+                // Collect all results for cycling
+                allFoundMatches.push(...match);
+                // Early exit if we found enough good results
+                if (allFoundMatches.length >= 5) {
+                    console.log(`  ✓ Found ${allFoundMatches.length} images, stopping early`);
+                    break;
+                }
+            } else if (!returnAll && match) {
+                // Return single best result
+                return match;
+            }
+            await delay(150);
+        } catch (e) {
+            console.warn(`    ⚠️ CONTAINS failed: ${e.message}`);
+            await delay(150);
+        }
+    }
+    
+    // Skip EXACT strategy if we already have enough results
+    if (returnAll && allFoundMatches.length >= 5) {
+        console.log(`  ⏭️ Skipping EXACT strategy - already have ${allFoundMatches.length} results`);
+    } else {
+        // Strategy 2: Exact match in English, German, Dutch, French, Spanish
+        for (const variant of variants) {
+            const escapedName = escapeSPARQL(variant);
+            console.log(`  🔍 EXACT (en+de+nl+fr+es): "${variant}"`);
+        
+        const exactQuery = `
+            SELECT ?item ?image ?itemLabel ?parkLabel ?mfgLabel WHERE {
+              {
+                ?item rdfs:label "${escapedName}"@en .
+              }
+              UNION {
+                ?item rdfs:label "${escapedName}"@de .
+              }
+              UNION {
+                ?item rdfs:label "${escapedName}"@nl .
+              }
+              UNION {
+                ?item rdfs:label "${escapedName}"@fr .
+              }
+              UNION {
+                ?item rdfs:label "${escapedName}"@es .
+              }
+              ${coasterTypeFilter}
+              ?item wdt:P18 ?image .
+              OPTIONAL { 
+                ?item wdt:P127 ?park . 
+                ?park rdfs:label ?parkLabel . 
+                FILTER(lang(?parkLabel) = "en")
+              }
+              OPTIONAL { 
+                ?item wdt:P176 ?mfg . 
+                ?mfg rdfs:label ?mfgLabel . 
+                FILTER(lang(?mfgLabel) = "en")
+              }
+              ?item rdfs:label ?itemLabel . 
+              FILTER(lang(?itemLabel) = "en")
+            }
+            LIMIT 10
+        `;
+        
+        try {
+            const results = await querySPARQLMultiple(exactQuery);
+            const match = processResults(results, 'EXACT');
+            if (returnAll && Array.isArray(match) && match.length > 0) {
+                // Collect all results for cycling
+                allFoundMatches.push(...match);
+                // Early exit if we found enough good results
+                if (allFoundMatches.length >= 5) {
+                    console.log(`  ✓ Found ${allFoundMatches.length} images, stopping early`);
+                    break;
+                }
+            } else if (!returnAll && match) {
+                // Return single best result
+                return match;
+            }
+            await delay(150);
+        } catch (e) {
+            console.warn(`    ⚠️ EXACT failed: ${e.message}`);
+            await delay(150);
+        }
+        }
+    }
+    
+    // Strategy 3: Relaxed search without strict type filter (if no results yet)
+    if (returnAll && allFoundMatches.length === 0) {
+        console.log(`  🔓 RELAXED: Trying without strict type filter...`);
+        for (const variant of variants.slice(0, 3)) { // Try first 3 variants
+            const escapedName = escapeSPARQL(variant);
+            console.log(`  🔍 RELAXED: "${variant}"`);
+            
+            // More targeted relaxed query - add park filter to narrow results
+            const parkFilter = parkName ? `
+              OPTIONAL { 
+                ?item wdt:P127 ?park . 
+                ?park rdfs:label ?parkLabel . 
+                FILTER(lang(?parkLabel) = "en")
+              }
+              FILTER(!BOUND(?park) || CONTAINS(LCASE(?parkLabel), LCASE("${escapeSPARQL(parkName)}")))
+            ` : '';
+            
+            const relaxedQuery = `
+                SELECT ?item ?image ?itemLabel ?parkLabel ?mfgLabel WHERE {
+                  ?item rdfs:label ?label .
+                  FILTER(CONTAINS(LCASE(?label), LCASE("${escapedName}")))
+                  ?item wdt:P18 ?image .
+                  ${parkFilter}
+                  OPTIONAL { 
+                    ?item wdt:P176 ?mfg . 
+                    ?mfg rdfs:label ?mfgLabel . 
+                    FILTER(lang(?mfgLabel) = "en")
+                  }
+                  ?item rdfs:label ?itemLabel . 
+                  FILTER(lang(?itemLabel) = "en")
+                }
+                LIMIT 5
+            `;
+            
+            try {
+                const results = await querySPARQLMultiple(relaxedQuery, 30000); // 30 second timeout for relaxed
+                const match = processResults(results, 'RELAXED');
+                if (Array.isArray(match) && match.length > 0) {
+                    allFoundMatches.push(...match);
+                    console.log(`    ✓ RELAXED found ${match.length} results`);
+                }
+                await delay(200);
+            } catch (e) {
+                console.warn(`    ⚠️ RELAXED failed: ${e.message}`);
+                // Don't block on RELAXED failures - continue with what we have
+                await delay(200);
+            }
+        }
+    }
+    
+    // Return all collected results
+    if (returnAll) {
+        // Deduplicate by URL
+        const uniqueMatches = [];
+        const seenUrls = new Set();
+        for (const match of allFoundMatches) {
+            if (!seenUrls.has(match.url)) {
+                seenUrls.add(match.url);
+                uniqueMatches.push(match);
+            }
+        }
+        
+        // Re-sort after combining strategies
+        uniqueMatches.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            const aParkLen = a.metadata.park?.length || 999;
+            const bParkLen = b.metadata.park?.length || 999;
+            return aParkLen - bParkLen;
+        });
+        
+        console.log(`  ✓ Total unique images found: ${uniqueMatches.length}`);
+        return uniqueMatches.length > 0 ? uniqueMatches : [];
+    }
+    
+    console.log(`  ✗ No image found after intensive search`);
+    return returnAll ? [] : null;
+}
+
+// Enhanced search for second round bulk loading (combines coaster name + park for better results)
+async function enhancedCoasterImageSearch(coaster) {
+    if (!coaster?.naam || !coaster?.park) return null;
+    
+    const coasterName = coaster.naam;
+    const parkName = coaster.park;
+    const manufacturer = coaster.fabrikant;
+    
+    console.log(`  🔍 Enhanced search: "${coasterName}" at ${parkName}`);
+    
+    const escapeSPARQL = (str) => str.replace(/["\\]/g, '\\$&');
+    const coasterTypeFilter = `?item wdt:P31/wdt:P279* wd:Q204832 .`;
+    
+    // Create a targeted query that searches for BOTH coaster name AND park name
+    const enhancedQuery = `
+        SELECT ?item ?image ?itemLabel ?parkLabel ?mfgLabel WHERE {
+          ?item rdfs:label ?itemLabel .
+          FILTER(CONTAINS(LCASE(?itemLabel), LCASE("${escapeSPARQL(coasterName)}")))
+          FILTER(lang(?itemLabel) = "en")
+          
+          ${coasterTypeFilter}
+          ?item wdt:P18 ?image .
+          
+          ?item wdt:P127 ?park .
+          ?park rdfs:label ?parkLabel .
+          FILTER(CONTAINS(LCASE(?parkLabel), LCASE("${escapeSPARQL(parkName)}")))
+          FILTER(lang(?parkLabel) = "en")
+          
+          OPTIONAL { 
+            ?item wdt:P176 ?mfg . 
+            ?mfg rdfs:label ?mfgLabel . 
+            FILTER(lang(?mfgLabel) = "en")
+          }
+        }
+        LIMIT 5
+    `;
+    
+    try {
+        const results = await querySPARQLMultiple(enhancedQuery, 15000);
+        
+        if (results && results.length > 0) {
+            console.log(`    ✓ Enhanced search found ${results.length} results`);
+            
+            // Pick best match (prefer manufacturer match if available)
+            let bestMatch = results[0];
+            for (const result of results) {
+                const mfgLabel = result.mfgLabel?.value || '';
+                if (manufacturer && mfgLabel.toLowerCase().includes(manufacturer.toLowerCase())) {
+                    bestMatch = result;
+                    break;
+                }
+            }
+            
+            const imageUrl = bestMatch.image?.value;
+            if (imageUrl) {
+                const finalUrl = imageUrl.startsWith('http://') ? imageUrl.replace('http://', 'https://') : imageUrl;
+                
+                // Cache the found image
+                const normalizedName = normalizeCoasterName(coasterName);
+                const normalizedPark = normalizeCoasterName(parkName);
+                const cacheKey = `coasterImage_${CACHE_VERSION}_${normalizedName}_${normalizedPark}`;
+                localStorage.setItem(cacheKey, finalUrl);
+                
+                console.log(`    ✓ Cached enhanced result for "${coasterName}"`);
+                return finalUrl;
+            }
+        }
+    } catch (error) {
+        console.warn(`    ⚠️ Enhanced search failed: ${error.message}`);
+    }
+    
+    return null;
+}
+
+// Helper function to add timeout to fetch requests
+async function fetchWithTimeout(url, options = {}, timeoutMs = 20000) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return response;
+    } catch (error) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+            throw new Error('Request timeout');
+        }
+        throw error;
+    }
+}
+
+// Execute SPARQL query against Wikidata
+async function querySPARQL(query) {
+    const endpoint = 'https://query.wikidata.org/sparql';
+    const url = `${endpoint}?query=${encodeURIComponent(query)}&format=json`;
+    
+    try {
+        const response = await fetchWithTimeout(url, {
+            headers: {
+                'Accept': 'application/sparql-results+json',
+                'User-Agent': 'CoasterRanker/1.0 (Educational Project)'
+            }
+        }, 20000); // 20 second timeout
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('SPARQL query failed:', response.status, response.statusText);
+            console.error('Error details:', errorText.substring(0, 500));
+            throw new Error(`SPARQL query failed: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const bindings = data?.results?.bindings;
+        
+        if (bindings && bindings.length > 0 && bindings[0].image) {
+            let imageUrl = bindings[0].image.value;
+            // Ensure HTTPS to avoid mixed content warnings
+            if (imageUrl.startsWith('http://')) {
+                imageUrl = imageUrl.replace('http://', 'https://');}
+            return imageUrl;
+        }
+        
+        return null;
+    } catch (error) {
+        console.error('SPARQL fetch error:', error.message);
+        throw error;
+    }
+}
+
+// Get coaster image (from cache or fetch from Wikidata)
+async function getCoasterImage(coaster) {
+    if (!coaster || !coaster.naam) return getPlaceholderImage();
+    
+    const normalizedName = normalizeCoasterName(coaster.naam);
+    const normalizedPark = normalizeCoasterName(coaster.park);
+    const cacheKey = `coasterImage_${CACHE_VERSION}_${normalizedName}_${normalizedPark}`;
+    
+    // Check cache first
+    try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            // Increment appropriate counter based on whether it's placeholder or real image
+            if (cached.startsWith('data:image/svg+xml')) {
+                // It's a cached placeholder (failed image)
+                imageLoadStats.failed++;
+            } else {
+                // It's a real cached image
+                imageLoadStats.loaded++;
+            }
+            imageLoadStats.cached++;
+            return cached;
+        }
+    } catch (e) {
+        console.warn('Cache read error:', e);
+    }
+    
+    // Fetch from Wikidata
+    try {
+        const imageUrl = await queryWikidataImage(coaster.naam, coaster.park, coaster.fabrikant);
+        
+        if (imageUrl) {
+            // Cache the result
+            try {
+                localStorage.setItem(cacheKey, imageUrl);
+            } catch (e) {
+                console.warn('Cache write error (quota?):', e);
+            }
+            imageLoadStats.loaded++;
+            return imageUrl;
+        } else {
+            // No image found - cache placeholder to avoid repeated queries
+            const placeholder = getPlaceholderImage();
+            try {
+                localStorage.setItem(cacheKey, placeholder);
+            } catch (e) {
+                console.warn('Cache write error:', e);
+            }
+            imageLoadStats.failed++;
+            return placeholder;
+        }
+    } catch (error) {
+        console.error('Error fetching image for', coaster.naam, ':', error);
+        imageLoadStats.failed++;
+        return getPlaceholderImage();
+    }
+}
+
+// Synchronous cache-only image retrieval (for instant display in battles)
+function getCoasterImageSync(coaster) {
+    if (!coaster || !coaster.naam) return getPlaceholderImage();
+    
+    const normalizedName = normalizeCoasterName(coaster.naam);
+    const normalizedPark = normalizeCoasterName(coaster.park);
+    const cacheKey = `coasterImage_${CACHE_VERSION}_${normalizedName}_${normalizedPark}`;
+    
+    // Check memory cache first (fastest)
+    if (imageMemoryCache.has(cacheKey)) {
+        return imageMemoryCache.get(cacheKey);
+    }
+    
+    // Check localStorage (slower)
+    try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            // Store in memory cache for next time
+            imageMemoryCache.set(cacheKey, cached);
+            return cached;
+        }
+    } catch (e) {
+        // Silent fail
+    }
+    
+    // Return placeholder if not in cache
+    return getPlaceholderImage();
+}
+
+// Preload a single image (returns promise that resolves when loaded)
+function preloadImage(imageUrl) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false); // Don't reject, just resolve with false
+        img.src = imageUrl;
+    });
+}
+
+// Preload images for a pair of coasters
+async function preloadBattleImages(coaster1, coaster2) {
+    const url1 = getCoasterImageSync(coaster1);
+    const url2 = getCoasterImageSync(coaster2);
+    
+    // Load both in parallel
+    await Promise.all([
+        preloadImage(url1),
+        preloadImage(url2)
+    ]);
+}
+
+// Background preloader - loads images for next potential battles
+async function preloadNextBattles() {
+    if (isPreloading || !currentUser || !coasters || coasters.length < 2) return;
+    
+    isPreloading = true;
+    const queueSize = keyboardUsageDetected ? PRELOAD_QUEUE_SIZE_FAST : PRELOAD_QUEUE_SIZE_NORMAL;
+    
+    try {
+        // Generate next potential battles
+        const battlesToPreload = [];
+        for (let i = 0; i < queueSize; i++) {
+            const pair = getRandomCoasters();
+            if (pair && pair.length === 2) {
+                battlesToPreload.push(pair);
+            }
+        }
+        
+        // Preload all images
+        for (const [c1, c2] of battlesToPreload) {
+            await preloadBattleImages(c1, c2);
+        }
+    } catch (e) {
+        console.warn('Preload error:', e);
+    } finally {
+        isPreloading = false;
+    }
+}
+
+// Clear all cached images from localStorage
+function clearImageCache() {
+    if (!confirm('Clear all cached coaster images? They will be re-fetched on next load.')) {
+        return;
+    }
+    
+    try {
+        const keys = Object.keys(localStorage);
+        let cleared = 0;
+        
+        keys.forEach(key => {
+            if (key.startsWith('coasterImage_')) {
+                localStorage.removeItem(key);
+                cleared++;
+            }
+        });
+        
+        // Reset stats
+        imageLoadStats = {
+            loaded: 0,
+            total: 0,
+            failed: 0,
+            cached: 0
+        };
+        
+        updateImageLoadStats();
+        showToast(`✅ Cleared ${cleared} cached images`);
+        
+        // Reload images
+        if (currentUser) {
+            preloadCoasterImages();
+        }
+    } catch (e) {
+        console.error('Error clearing cache:', e);
+        showToast('❌ Failed to clear cache');
+    }
+}
+
+// Auto-clean old cache versions (called on startup)
+function cleanOldCacheVersions() {
+    try {
+        const keys = Object.keys(localStorage);
+        let cleaned = 0;
+        
+        keys.forEach(key => {
+            // Remove old version caches (anything not matching current version)
+            if (key.startsWith('coasterImage_') && !key.startsWith(`coasterImage_${CACHE_VERSION}_`)) {
+                localStorage.removeItem(key);
+                cleaned++;
+            }
+        });
+        
+        if (cleaned > 0) {
+            console.log(`🧹 Cleaned ${cleaned} old cache entries (outdated version)`);
+        }
+    } catch (e) {
+        console.warn('Error cleaning old cache:', e);
+    }
+}
+
+// Update dev menu with current image loading stats
+function updateImageLoadStats() {
+    const progressEl = document.getElementById('imageLoadProgress');
+    const detailsEl = document.getElementById('imageLoadDetails');
+    
+    if (progressEl && imageLoadStats.total > 0) {
+        const percentage = Math.round((imageLoadStats.loaded + imageLoadStats.failed + imageLoadStats.cached) / imageLoadStats.total * 100);
+        const completed = imageLoadStats.loaded + imageLoadStats.failed + imageLoadStats.cached;
+        progressEl.textContent = `Loaded: ${completed} / ${imageLoadStats.total} (${percentage}%)`;
+    } else if (progressEl) {
+        progressEl.textContent = 'No images loaded yet';
+    }
+    
+    if (detailsEl) {
+        detailsEl.textContent = `Cache hits: ${imageLoadStats.cached} | Errors: ${imageLoadStats.failed}`;
+    }
+}
+
+// Preload all coaster images in background
+// Update loading screen progress
+    function updateLoadingScreen(loaded, total, failed, customMessage = null) {
+        requestAnimationFrame(() => {
+            const overlay = document.getElementById('imageLoadingOverlay');
+            const train = document.getElementById('coasterTrain');
+            const progressText = document.getElementById('loadingProgressText');
+    
+    if (!overlay || !train || !progressText) return;
+    
+    const processed = loaded + failed;
+    const percentage = total > 0 ? Math.round((processed / total) * 100) : 0;
+    
+    // Move train horizontally across the track
+    const container = train.parentElement;
+    const maxPosition = container ? container.offsetWidth - 60 : 340; // Leave space for train length
+    train.style.left = `${(percentage / 100) * maxPosition}px`;
+    
+    if (customMessage) {
+        progressText.textContent = `${customMessage} (${processed}/${total})`;
+    } else {
+        progressText.textContent = `Loading images: ${loaded} found, ${failed} not found (${processed}/${total})`;
+    }
+        });
+    }
+
+// Hide loading screen
+function hideLoadingScreen() {
+    const overlay = document.getElementById('imageLoadingOverlay');
+    if (overlay) {
+        overlay.classList.add('hidden');
+        setTimeout(() => {
+            overlay.style.display = 'none';
+        }, 300);
+    }
+}
+
+// Progressive loading: load priority coasters first, then background load rest
+// Preload all coaster images during loading screen
+async function preloadAllCoasterImages() {
+    if (!currentUser || !coasters || coasters.length === 0) {
+        hideLoadingScreen();
+        return;
+    }
+    
+    cleanOldCacheVersions();
+    
+    imageLoadStats.loaded = 0;
+    imageLoadStats.failed = 0;
+    imageLoadStats.cached = 0;
+    imageLoadStats.total = coasters.length;
+    
+    // Quick check: count how many are already cached
+    let cachedCount = 0;
+    for (const coaster of coasters) {
+        const normalizedName = normalizeCoasterName(coaster.naam);
+        const normalizedPark = normalizeCoasterName(coaster.park);
+        const cacheKey = `coasterImage_${CACHE_VERSION}_${normalizedName}_${normalizedPark}`;
+        if (localStorage.getItem(cacheKey)) {
+            cachedCount++;
+        }
+    }
+    
+    console.log(`📦 Found ${cachedCount}/${coasters.length} images in cache`);
+    
+    // If all are cached, load instantly without showing loading screen progress
+    if (cachedCount === coasters.length) {
+        console.log(`✓ All images cached - instant load!`);
+        // Just increment stats for cached images
+        for (const coaster of coasters) {
+            await getCoasterImage(coaster); // Will return from cache instantly
+        }
+        hideLoadingScreen();
+        return;
+    }
+    
+    // Some images need fetching - show loading screen
+    updateImageLoadStats();
+    updateLoadingScreen(0, coasters.length, 0);
+    
+    console.log(`🚀 Loading ${coasters.length - cachedCount} new images (${cachedCount} from cache)...`);
+    
+    // Load in small batches to avoid rate limiting
+    const batchSize = 5;
+    const batchDelay = 300; // 300ms between batches
+    
+    for (let i = 0; i < coasters.length; i += batchSize) {
+        const batch = coasters.slice(i, i + batchSize);
+        
+        await Promise.all(
+            batch.map(coaster => 
+                getCoasterImage(coaster).then(() => {
+                    updateImageLoadStats();
+                    updateLoadingScreen(imageLoadStats.loaded, imageLoadStats.total, imageLoadStats.failed);
+                })
+            )
+        );
+        
+        // Wait between batches only if fetching new images
+        if (i + batchSize < coasters.length) {
+            await new Promise(resolve => setTimeout(resolve, batchDelay));
+        }
+    }
+    
+    console.log(`✓ All ${coasters.length} coasters loaded!`);
+    console.log(`  Loaded: ${imageLoadStats.loaded}, Failed: ${imageLoadStats.failed}, From cache: ${imageLoadStats.cached}`);
+    
+    hideLoadingScreen();
+}
+
+// OLD: Progressive loading function (removed - kept for reference)
+async function preloadCoasterImagesProgressive() {
+    if (!currentUser || !coasters || coasters.length === 0) {
+        hideLoadingScreen();
+        return;
+    }
+    
+    cleanOldCacheVersions();
+    
+    imageLoadStats.loaded = 0;
+    imageLoadStats.failed = 0;
+    imageLoadStats.cached = 0;
+    imageLoadStats.total = coasters.length;
+    
+    updateImageLoadStats();
+    updateLoadingScreen(0, coasters.length, 0);
+    
+    console.log(`🚀 Progressive loading: Loading first 20 coasters immediately...`);
+    
+    // PRIORITY: Load first 20 coasters that will show in initial battles
+    const priorityCount = Math.min(20, coasters.length);
+    const priorityCoasters = coasters.slice(0, priorityCount);
+    
+    // Load priority coasters with minimal delay
+    for (const coaster of priorityCoasters) {
+        await getCoasterImage(coaster);
+        coastersWithImages.add(coaster.naam); // Track as loaded
+        updateImageLoadStats();
+        updateLoadingScreen(imageLoadStats.loaded, imageLoadStats.total, imageLoadStats.failed);
+        await new Promise(resolve => setTimeout(resolve, 100)); // Small delay to avoid instant rate limit
+    }
+    
+    console.log(`✓ First ${priorityCount} coasters loaded - starting battles!`);
+    hideLoadingScreen();
+    
+    // BACKGROUND: Load remaining coasters slowly to avoid rate limits
+    if (coasters.length > priorityCount) {
+        console.log(`📦 Background loading remaining ${coasters.length - priorityCount} coasters...`);
+        backgroundLoadRemainingImages(priorityCount);
+    }
+}
+
+// Background loader - loads remaining images slowly without blocking UI
+async function backgroundLoadRemainingImages(startIndex) {
+    const remainingCoasters = coasters.slice(startIndex);
+    const batchSize = 5; // Balanced batch size for speed without rate limiting
+    const batchDelay = 800; // 800ms delay - completes ~100 coasters in under 1 minute
+    
+    for (let i = 0; i < remainingCoasters.length; i += batchSize) {
+        const batch = remainingCoasters.slice(i, i + batchSize);
+        
+        // Process batch
+        await Promise.all(
+            batch.map(async (coaster) => {
+                await getCoasterImage(coaster);
+                coastersWithImages.add(coaster.naam); // Track as loaded
+                // Silently update stats without UI noise
+            })
+        );
+        
+        // Wait between batches to avoid rate limiting
+        if (i + batchSize < remainingCoasters.length) {
+            await new Promise(resolve => setTimeout(resolve, batchDelay));
+        }
+    }
+    
+    allCoastersLoadingComplete = true;
+    console.log(`✓ Background loading complete - all ${coasters.length} coasters ready! Returning to normal selection.`);
+}
+
+// Original full preload function (kept for fallback/manual use)
+async function preloadCoasterImages() {
+    if (!currentUser || !coasters || coasters.length === 0) {
+        hideLoadingScreen();
+        return;
+    }
+    
+    // Auto-clean old cache versions before starting
+    cleanOldCacheVersions();
+    
+    // IMPORTANT: Reset ALL stats including cached to avoid showing stale numbers
+    imageLoadStats.loaded = 0;
+    imageLoadStats.failed = 0;
+    imageLoadStats.cached = 0;
+    imageLoadStats.total = coasters.length;
+    
+    updateImageLoadStats();
+    updateLoadingScreen(0, coasters.length, 0);
+    
+    console.log(`Starting image preload for ${coasters.length} coasters...`);
+    
+    // Track failed coasters for second round
+    const failedCoasters = [];
+    
+    // Smaller batches to avoid overwhelming the API
+    const batchSize = 5; // Reduced to avoid rate limiting
+    const delay = 300; // Increased delay between batches
+    
+    // FIRST ROUND: Standard search
+    for (let i = 0; i < coasters.length; i += batchSize) {
+        const batch = coasters.slice(i, i + batchSize);
+        const startCached = imageLoadStats.cached;
+        const startFailed = imageLoadStats.failed;
+        
+        // Process batch in parallel
+        await Promise.all(
+            batch.map(async (coaster) => {
+                await getCoasterImage(coaster);
+                updateImageLoadStats();
+                updateLoadingScreen(imageLoadStats.loaded, imageLoadStats.total, imageLoadStats.failed);
+            })
+        );
+        
+        // Track which coasters in this batch failed
+        const newFailures = imageLoadStats.failed - startFailed;
+        if (newFailures > 0) {
+            // Check which ones failed and add to retry list
+            for (const coaster of batch) {
+                const normalizedName = normalizeCoasterName(coaster.naam);
+                const normalizedPark = normalizeCoasterName(coaster.park);
+                const cacheKey = `coasterImage_${CACHE_VERSION}_${normalizedName}_${normalizedPark}`;
+                const cached = localStorage.getItem(cacheKey);
+                // If it's a placeholder, mark for retry
+                if (cached && cached.includes('data:image/svg+xml')) {
+                    failedCoasters.push(coaster);
+                }
+            }
+        }
+        
+        // Only delay if this batch made API calls (not all cached)
+        const newlyCached = imageLoadStats.cached - startCached;
+        if (i + batchSize < coasters.length && newlyCached < batch.length) {
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+    
+    const firstRoundSuccess = imageLoadStats.loaded;
+    const firstRoundFailed = imageLoadStats.failed;
+    console.log(`First round complete: ${firstRoundSuccess} found, ${firstRoundFailed} failed`);
+    
+    // SECOND ROUND: Enhanced search for failed coasters with park+name combined query
+    if (failedCoasters.length > 0) {
+        console.log(`🔄 Starting second round for ${failedCoasters.length} failed coasters...`);
+        updateLoadingScreen(imageLoadStats.loaded, imageLoadStats.total, imageLoadStats.failed, 'Retrying failed images...');
+        
+        let secondRoundSuccess = 0;
+        
+        for (let i = 0; i < failedCoasters.length; i += batchSize) {
+            const batch = failedCoasters.slice(i, i + batchSize);
+            
+            await Promise.all(
+                batch.map(async (coaster) => {
+                    const result = await enhancedCoasterImageSearch(coaster);
+                    if (result) {
+                        secondRoundSuccess++;
+                        imageLoadStats.loaded++;
+                        imageLoadStats.failed--;
+                        updateImageLoadStats();
+                        updateLoadingScreen(imageLoadStats.loaded, imageLoadStats.total, imageLoadStats.failed);
+                    }
+                })
+            );
+            
+            // Delay between batches
+            if (i + batchSize < failedCoasters.length) {
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+        
+        console.log(`Second round complete: ${secondRoundSuccess} additional images found`);
+    }
+    
+    const successRate = Math.round((imageLoadStats.loaded / imageLoadStats.total) * 100);
+    console.info(`Image preloading complete: ${successRate}% success (${imageLoadStats.loaded} found, ${imageLoadStats.failed} not found, ${imageLoadStats.cached} cached)`, imageLoadStats);
+    
+    // Hide loading screen after all images are processed
+    hideLoadingScreen();
+}
+
+// ========================================
+// END IMAGE FETCHING SERVICE
+// ========================================
     
     function syncSimInputWidth() {
         try {
@@ -189,6 +2097,8 @@ const onResize = debounce(() => {
 window.addEventListener('resize', onResize, { passive: true });
     let currentUser = null;
     let coasters = [];
+    let coastersWithImages = new Set(); // Track coasters that have images loaded
+    let allCoastersLoadingComplete = false; // True when all coasters have been attempted
     let coasterStats = {};
     let totalBattlesCount = 0;
     let currentBattle = null;
@@ -236,23 +2146,26 @@ window.addEventListener('resize', onResize, { passive: true });
         }catch(e){}
     }
     let isProcessingChoice = false;
-    let currentSort = { column: 'elo', ascending: false };
+    let currentSort = { column: 'rating', ascending: false };
     // History: stores past battles for current user
     let coasterHistory = [];
     // Stack for undoing deletions (LIFO)
     let deletedHistoryStack = [];
     const MAX_UNDO_STACK = 50;
+    const MAX_HISTORY_KEEP = 10000; // Maximum history entries to keep
     // Exploration boost: favor coasters with few battles
     let EXPLORATION_POWER = 2; // higher => stronger preference for low-battles
-    // Automatic ELO tuning parameters (internal, no UI required)
-    const ELO_BASE = 1500;
-    const K0 = 64;           // initial K scale
-    const K_DECAY_C = 10;    // decay constant (larger -> slower decay)
-    const K_MIN = 8;         // minimum K to keep movement
-    const PRIOR_WEIGHT = 6;  // pseudo-battles pulling displayed ELO toward mean
-    // ELO-proximity: prefer opponents whose ELO is similar (more informative matches)
-    let ELO_PROXIMITY_POWER = 0.1; // higher => stronger preference for similar ELO
-    const ELO_DIFF_SCALE = 400; // scale (in ELO points) used to normalize differences
+    // Glicko-2 rating system parameters
+    const GLICKO2_RATING_BASE = 1500;     // Initial rating (same scale as ELO for compatibility)
+    const GLICKO2_RD_INITIAL = 350;       // Initial rating deviation (high uncertainty)
+    const GLICKO2_VOLATILITY_INITIAL = 0.06; // Initial volatility
+    const GLICKO2_TAU = 0.5;              // System constant (constrains volatility change, 0.3-1.2)
+    const GLICKO2_EPSILON = 0.000001;     // Convergence tolerance
+    const GLICKO2_SCALE_FACTOR = 173.7178; // Conversion factor from Glicko to Glicko-2 scale
+    const PRIOR_WEIGHT = 6;  // pseudo-battles pulling displayed rating toward mean (for display only)
+    // Rating-proximity: prefer opponents whose rating is similar (more informative matches)
+    let RATING_PROXIMITY_POWER = 0.1; // higher => stronger preference for similar rating
+    const RATING_DIFF_SCALE = 400; // scale (in rating points) used to normalize differences
     // Pairing strategy: hybrid — picks one under-sampled coaster
     // then picks a second that is ELO-similar while still favoring under-sampled ones.
     let pairingControlsHidden = true;
@@ -288,9 +2201,14 @@ const DOM = {};
             updateAchievementsTab();
         }
         
+        // Reset session stats when switching users
+        resetSessionStats();
+        
         // Refresh displays
         displayBattle();
         updateRanking();
+        displayHome(); // Update home tab with new user data
+        
         // close menu after selection (if open)
         try { closeUserMenu(); } catch (e) {}
     }
@@ -300,14 +2218,41 @@ const DOM = {};
         const battlesKey = `totalBattles_${currentUser}`;
         const historyKey = `coasterHistory_${currentUser}`;
         const pairsKey = `completedPairs_${currentUser}`;
+        const battleKey = `currentBattle_${currentUser}`;
 
         coasterStats = JSON.parse(localStorage.getItem(statsKey)) || initializeStats();
+        
+        // Migrate from ELO to Glicko-2 if necessary
+        Object.values(coasterStats).forEach(stats => {
+            if (stats.elo !== undefined && stats.rating === undefined) {
+                // Migrate old ELO data to Glicko-2
+                stats.rating = stats.elo;
+                stats.rd = GLICKO2_RD_INITIAL;
+                stats.volatility = GLICKO2_VOLATILITY_INITIAL;
+                delete stats.elo;
+            }
+            // Ensure all Glicko-2 fields exist
+            if (stats.rating === undefined) stats.rating = GLICKO2_RATING_BASE;
+            if (stats.rd === undefined) stats.rd = GLICKO2_RD_INITIAL;
+            if (stats.volatility === undefined) stats.volatility = GLICKO2_VOLATILITY_INITIAL;
+        });
+        
         totalBattlesCount = parseInt(localStorage.getItem(battlesKey)) || 0;
         coasterHistory = JSON.parse(localStorage.getItem(historyKey)) || [];
         
         // Load completed pairs
         const savedPairs = localStorage.getItem(pairsKey);
         completedPairs = savedPairs ? new Set(JSON.parse(savedPairs)) : new Set();
+        
+        // Load current battle if it exists
+        try {
+            const savedBattle = localStorage.getItem(battleKey);
+            if (savedBattle) {
+                currentBattle = JSON.parse(savedBattle);
+            }
+        } catch (e) {
+            currentBattle = null;
+        }
         
         // load pairing settings for this user (if any)
         loadPairingSettings();
@@ -322,7 +2267,9 @@ const DOM = {};
                 name: coaster.naam,
                 park: coaster.park,
                 manufacturer: coaster.fabrikant,
-                elo: 1500,
+                rating: GLICKO2_RATING_BASE,
+                rd: GLICKO2_RD_INITIAL,
+                volatility: GLICKO2_VOLATILITY_INITIAL,
                 battles: 0,
                 wins: 0,
                 losses: 0
@@ -337,11 +2284,28 @@ const DOM = {};
         const battlesKey = `totalBattles_${currentUser}`;
         const historyKey = `coasterHistory_${currentUser}`;
         const pairsKey = `completedPairs_${currentUser}`;
+        const battleKey = `currentBattle_${currentUser}`;
 
-        localStorage.setItem(statsKey, JSON.stringify(coasterStats));
-        localStorage.setItem(battlesKey, totalBattlesCount.toString());
-        localStorage.setItem(historyKey, JSON.stringify(coasterHistory));
-        localStorage.setItem(pairsKey, JSON.stringify([...completedPairs]));
+        try {
+            localStorage.setItem(statsKey, JSON.stringify(coasterStats));
+            localStorage.setItem(battlesKey, totalBattlesCount.toString());
+            localStorage.setItem(historyKey, JSON.stringify(coasterHistory));
+            localStorage.setItem(pairsKey, JSON.stringify([...completedPairs]));
+            // Save current battle if it exists
+            if (currentBattle && currentBattle.length === 2) {
+                localStorage.setItem(battleKey, JSON.stringify(currentBattle));
+            } else {
+                localStorage.removeItem(battleKey);
+            }
+        } catch (error) {
+            // Handle localStorage quota exceeded
+            if (error.name === 'QuotaExceededError') {
+                console.error('LocalStorage quota exceeded. Consider clearing old data.');
+                showToast('Storage limit reached. Some data may not be saved.', 3000);
+            } else {
+                console.error('Error saving data:', error);
+            }
+        }
         
         // persist pairing settings per-user
         try {
@@ -718,7 +2682,7 @@ const DOM = {};
         const menu = document.getElementById('devMenu');
         const btn = document.getElementById('devToggleBtn');
         if (!menu || !btn) return;
-        if (!menu.contains(ev.target) && ev.target !== btn) {
+        if (!menu.contains(ev.target) && !btn.contains(ev.target)) {
             closeDevMenu();
         }
     }
@@ -766,13 +2730,17 @@ const DOM = {};
                         return simulated;
                     }
 
-                    // pick winner probabilistically according to current ELOs
+                    // pick winner probabilistically according to current ratings (using Glicko-2)
                     const a = pair[0], b = pair[1];
                     // ensure stats exist for both coasters
                     const aStats = ensureCoasterStats(a);
                     const bStats = ensureCoasterStats(b);
-                    const aE = aStats.elo, bE = bStats.elo;
-                    const probA = 1 / (1 + Math.pow(10, (bE - aE) / 400));
+                    // Calculate win probability using Glicko-2 expected score
+                    const mu_a = glicko2Scale(aStats.rating);
+                    const phi_a = glicko2ScaleRD(aStats.rd);
+                    const mu_b = glicko2Scale(bStats.rating);
+                    const phi_b = glicko2ScaleRD(bStats.rd);
+                    const probA = glicko2_E(mu_a, mu_b, phi_b);
                     const rnd = (typeof rng === 'function') ? rng() : Math.random();
                     const winnerIdx = (rnd < probA) ? 0 : 1;
                     const winner = pair[winnerIdx], loser = pair[1 - winnerIdx];
@@ -782,27 +2750,37 @@ const DOM = {};
                     const loserStats = ensureCoasterStats(loser);
                     
                     // Capture data before battle
-                    const winnerEloBefore = winnerStats.elo;
-                    const loserEloBefore = loserStats.elo;
+                    const winnerRatingBefore = winnerStats.rating;
+                    const loserRatingBefore = loserStats.rating;
+                    const winnerRDBefore = winnerStats.rd;
+                    const loserRDBefore = loserStats.rd;
+                    const winnerVolatilityBefore = winnerStats.volatility;
+                    const loserVolatilityBefore = loserStats.volatility;
                     const winnerRankBefore = getCoasterRank(winner.naam);
                     const loserRankBefore = getCoasterRank(loser.naam);
                     const winnerBattlesBefore = winnerStats.battles;
                     const loserBattlesBefore = loserStats.battles;
                     
-                    const eloOutcome = calculateEloAdaptiveFromStats(winnerStats, loserStats);
-                    const { newWinnerElo, newLoserElo, K } = eloOutcome;
+                    const glickoOutcome = calculateGlicko2(winnerStats, loserStats);
+                    const { newWinnerRating, newWinnerRD, newWinnerVolatility, newLoserRating, newLoserRD, newLoserVolatility } = glickoOutcome;
                     
                     // Calculate expected probabilities and potential changes
-                    const expectedWinnerProb = 1 / (1 + Math.pow(10, (loserEloBefore - winnerEloBefore) / 400));
+                    const mu_w = glicko2Scale(winnerRatingBefore);
+                    const phi_w = glicko2ScaleRD(winnerRDBefore);
+                    const mu_l = glicko2Scale(loserRatingBefore);
+                    const phi_l = glicko2ScaleRD(loserRDBefore);
+                    const expectedWinnerProb = glicko2_E(mu_w, mu_l, phi_l);
                     const expectedLoserProb = 1 - expectedWinnerProb;
-                    const winnerPotentialGain = newWinnerElo - winnerEloBefore;
-                    const loserPotentialLoss = newLoserElo - loserEloBefore;
-                    const loserIfWinOutcome = calculateEloAdaptiveFromStats(loserStats, winnerStats);
-                    const loserPotentialGain = loserIfWinOutcome.newWinnerElo - loserEloBefore;
-                    const winnerPotentialLoss = loserIfWinOutcome.newLoserElo - winnerEloBefore;
+                    const winnerPotentialGain = newWinnerRating - winnerRatingBefore;
+                    const loserPotentialLoss = newLoserRating - loserRatingBefore;
+                    const loserIfWinOutcome = calculateGlicko2(loserStats, winnerStats);
+                    const loserPotentialGain = loserIfWinOutcome.newWinnerRating - loserRatingBefore;
+                    const winnerPotentialLoss = loserIfWinOutcome.newLoserRating - winnerRatingBefore;
                     
-                    winnerStats.elo = newWinnerElo; winnerStats.battles++; winnerStats.wins++;
-                    loserStats.elo = newLoserElo; loserStats.battles++; loserStats.losses++;
+                    winnerStats.rating = newWinnerRating; winnerStats.rd = newWinnerRD; winnerStats.volatility = newWinnerVolatility;
+                    winnerStats.battles++; winnerStats.wins++;
+                    loserStats.rating = newLoserRating; loserStats.rd = newLoserRD; loserStats.volatility = newLoserVolatility;
+                    loserStats.battles++; loserStats.losses++;
                     totalBattlesCount++;
                     
                     // Get ranks after battle
@@ -813,9 +2791,12 @@ const DOM = {};
                     // Build comprehensive battle stats
                     const battleStats = {
                         statsA: {
-                            eloBefore: (pair[0].naam === winner.naam) ? winnerEloBefore : loserEloBefore,
-                            eloAfter: (pair[0].naam === winner.naam) ? winnerStats.elo : loserStats.elo,
-                            kFactor: K,
+                            ratingBefore: (pair[0].naam === winner.naam) ? winnerRatingBefore : loserRatingBefore,
+                            ratingAfter: (pair[0].naam === winner.naam) ? winnerStats.rating : loserStats.rating,
+                            rdBefore: (pair[0].naam === winner.naam) ? winnerRDBefore : loserRDBefore,
+                            rdAfter: (pair[0].naam === winner.naam) ? winnerStats.rd : loserStats.rd,
+                            volatilityBefore: (pair[0].naam === winner.naam) ? winnerVolatilityBefore : loserVolatilityBefore,
+                            volatilityAfter: (pair[0].naam === winner.naam) ? winnerStats.volatility : loserStats.volatility,
                             potentialGain: (pair[0].naam === winner.naam) ? winnerPotentialGain : loserPotentialGain,
                             potentialLoss: (pair[0].naam === winner.naam) ? winnerPotentialLoss : loserPotentialLoss,
                             rankBefore: (pair[0].naam === winner.naam) ? winnerRankBefore : loserRankBefore,
@@ -824,9 +2805,12 @@ const DOM = {};
                             totalBattlesBefore: (pair[0].naam === winner.naam) ? winnerBattlesBefore : loserBattlesBefore
                         },
                         statsB: {
-                            eloBefore: (pair[1].naam === winner.naam) ? winnerEloBefore : loserEloBefore,
-                            eloAfter: (pair[1].naam === winner.naam) ? winnerStats.elo : loserStats.elo,
-                            kFactor: K,
+                            ratingBefore: (pair[1].naam === winner.naam) ? winnerRatingBefore : loserRatingBefore,
+                            ratingAfter: (pair[1].naam === winner.naam) ? winnerStats.rating : loserStats.rating,
+                            rdBefore: (pair[1].naam === winner.naam) ? winnerRDBefore : loserRDBefore,
+                            rdAfter: (pair[1].naam === winner.naam) ? winnerStats.rd : loserStats.rd,
+                            volatilityBefore: (pair[1].naam === winner.naam) ? winnerVolatilityBefore : loserVolatilityBefore,
+                            volatilityAfter: (pair[1].naam === winner.naam) ? winnerStats.volatility : loserStats.volatility,
                             potentialGain: (pair[1].naam === winner.naam) ? winnerPotentialGain : loserPotentialGain,
                             potentialLoss: (pair[1].naam === winner.naam) ? winnerPotentialLoss : loserPotentialLoss,
                             rankBefore: (pair[1].naam === winner.naam) ? winnerRankBefore : loserRankBefore,
@@ -865,39 +2849,47 @@ const DOM = {};
 
         // compute the same dev-html used when battle is first rendered
         const left = currentBattle[0], right = currentBattle[1];
-        const leftStats = coasterStats[left.naam] || { elo:1500, battles:0, wins:0, losses:0 };
-        const rightStats = coasterStats[right.naam] || { elo:1500, battles:0, wins:0, losses:0 };
-        // compute ELO scenarios once
-        const leftIfWin = calculateEloAdaptiveFromStats(leftStats, rightStats);
-        const leftIfLose = calculateEloAdaptiveFromStats(rightStats, leftStats);
-        const rightIfWin = calculateEloAdaptiveFromStats(rightStats, leftStats);
-        const rightIfLose = calculateEloAdaptiveFromStats(leftStats, rightStats);
-        const leftGainWin = Math.round(leftIfWin.newWinnerElo - leftStats.elo);
-        const leftLoseIfLose = Math.round(leftIfLose.newLoserElo - leftStats.elo);
-        const rightGainWin = Math.round(rightIfWin.newWinnerElo - rightStats.elo);
-        const rightLoseIfLose = Math.round(rightIfLose.newLoserElo - rightStats.elo);
+        const leftStats = coasterStats[left.naam] || { rating:GLICKO2_RATING_BASE, rd:GLICKO2_RD_INITIAL, volatility:GLICKO2_VOLATILITY_INITIAL, battles:0, wins:0, losses:0 };
+        const rightStats = coasterStats[right.naam] || { rating:GLICKO2_RATING_BASE, rd:GLICKO2_RD_INITIAL, volatility:GLICKO2_VOLATILITY_INITIAL, battles:0, wins:0, losses:0 };
+        // compute Glicko-2 scenarios once
+        const leftIfWin = calculateGlicko2(leftStats, rightStats);
+        const leftIfLose = calculateGlicko2(rightStats, leftStats);
+        const leftGainWin = Math.round(leftIfWin.newWinnerRating - leftStats.rating);
+        const leftLoseIfLose = Math.round(leftIfLose.newLoserRating - leftStats.rating);
+        const rightGainWin = Math.round(leftIfLose.newWinnerRating - rightStats.rating);
+        const rightLoseIfLose = Math.round(leftIfWin.newLoserRating - rightStats.rating);
         const fmt = (n) => (n >= 0 ? '+' + n : n.toString());
 
-        const rank1 = (() => { const statsArray = Object.values(coasterStats); const sorted = [...statsArray].sort((a, b) => b.elo - a.elo); return sorted.findIndex(c => c.name === left.naam) + 1; })();
-        const rank2 = (() => { const statsArray = Object.values(coasterStats); const sorted = [...statsArray].sort((a, b) => b.elo - a.elo); return sorted.findIndex(c => c.name === right.naam) + 1; })();
+        const rank1 = (() => { const statsArray = Object.values(coasterStats); const sorted = [...statsArray].sort((a, b) => b.rating - a.rating); return sorted.findIndex(c => c.name === left.naam) + 1; })();
+        const rank2 = (() => { const statsArray = Object.values(coasterStats); const sorted = [...statsArray].sort((a, b) => b.rating - a.rating); return sorted.findIndex(c => c.name === right.naam) + 1; })();
 
         const devLeftHtml = `
             <div><strong>Rank:</strong> ${rank1}</div>
-            <div><strong>ELO:</strong> ${Math.round(leftStats.elo)}</div>
+            <div><strong>Rating:</strong> ${Math.round(leftStats.rating)} ± ${Math.round(leftStats.rd)}</div>
+            <div><strong>σ:</strong> ${leftStats.volatility.toFixed(4)}</div>
             <div><strong>Δ (win):</strong> ${fmt(leftGainWin)}</div>
             <div><strong>Δ (lose):</strong> ${fmt(leftLoseIfLose)}</div>
             <div><strong>Battles:</strong> ${leftStats.battles}</div>
             <div><strong>Wins:</strong> ${leftStats.wins}</div>
             <div><strong>Losses:</strong> ${leftStats.losses}</div>
+            <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.2);">
+                <div id="imageInfo_${left.naam.replace(/[^a-z0-9]/gi, '_')}" style="font-size:0.85em;color:#aaa;margin-bottom:4px;"></div>
+                <button onclick="retryCoasterImage('${left.naam.replace(/'/g, "\\'")}', '${left.park.replace(/'/g, "\\'")}', '${left.fabrikant.replace(/'/g, "\\'")}', '${left.naam.replace(/[^a-z0-9]/gi, '_')}', event)" style="font-size:0.85em;padding:2px 6px;background:#4CA1AF;color:white;border:none;border-radius:4px;cursor:pointer;">🔄 Retry Image</button>
+            </div>
         `;
         const devRightHtml = `
             <div><strong>Rank:</strong> ${rank2}</div>
-            <div><strong>ELO:</strong> ${Math.round(rightStats.elo)}</div>
+            <div><strong>Rating:</strong> ${Math.round(rightStats.rating)} ± ${Math.round(rightStats.rd)}</div>
+            <div><strong>σ:</strong> ${rightStats.volatility.toFixed(4)}</div>
             <div><strong>Δ (win):</strong> ${fmt(rightGainWin)}</div>
             <div><strong>Δ (lose):</strong> ${fmt(rightLoseIfLose)}</div>
             <div><strong>Battles:</strong> ${rightStats.battles}</div>
             <div><strong>Wins:</strong> ${rightStats.wins}</div>
             <div><strong>Losses:</strong> ${rightStats.losses}</div>
+            <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.2);">
+                <div id="imageInfo_${right.naam.replace(/[^a-z0-9]/gi, '_')}" style="font-size:0.85em;color:#aaa;margin-bottom:4px;"></div>
+                <button onclick="retryCoasterImage('${right.naam.replace(/'/g, "\\'")}', '${right.park.replace(/'/g, "\\'")}', '${right.fabrikant.replace(/'/g, "\\'")}', '${right.naam.replace(/[^a-z0-9]/gi, '_')}', event)" style="font-size:0.85em;padding:2px 6px;background:#4CA1AF;color:white;border:none;border-radius:4px;cursor:pointer;">🔄 Retry Image</button>
+            </div>
         `;
 
         // Place overlay inside coaster cards, over the images
@@ -961,7 +2953,7 @@ const DOM = {};
         if (!coasterName || !coasterStats[coasterName]) return null;
         
         const statsArray = Object.values(coasterStats);
-        const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
+        const sorted = [...statsArray].sort((a, b) => b.rating - a.rating);
         
         return sorted.findIndex(c => c.name === coasterName) + 1;
     }
@@ -993,8 +2985,7 @@ const DOM = {};
         // Mark this pair as completed
         completedPairs.add(key);
 
-        // keep history bounded if you want (optional)
-        const MAX_HISTORY_KEEP = 10000;
+        // keep history bounded (using predefined constant)
         if (coasterHistory.length > MAX_HISTORY_KEEP) coasterHistory.splice(0, coasterHistory.length - MAX_HISTORY_KEEP);
 
         if (!skipSave) saveData();
@@ -1036,7 +3027,8 @@ const DOM = {};
                         const stats = coasterStats && coasterStats[name] ? coasterStats[name] : null;
                         const battles = stats && typeof stats.battles === 'number' ? stats.battles : 0;
                         // base exploration weight: inverse of (1 + battles) ^ EXPLORATION_POWER
-                        const w = 1 / Math.pow(1 + Math.max(0, battles), EXPLORATION_POWER);
+                        let w = 1 / Math.pow(1 + Math.max(0, battles), EXPLORATION_POWER);
+                        // No image bias - all coasters loaded before first battle
                         weights[i] = w;
                     } catch (e) {
                         weights[i] = 1;
@@ -1056,20 +3048,20 @@ const DOM = {};
                     return arr.length - 1;
                 };
 
-                // Hybrid strategy: pick one under-sampled coaster first, then a second biased by ELO-proximity
+                // Hybrid strategy: pick one under-sampled coaster first, then a second biased by rating-proximity
                 // (still favors under-sampled ones via base weights)
                 const indexFromExploration = () => sampleIndexFromWeights(weights, randomFn);
                 for (let t = 0; t < attempts; t++) {
                     const i = indexFromExploration();
-                    // use displayedElo (regularized) for pairing proximity calculations
-                    const eloI = (coasterStats && coasterStats[coasters[i].naam]) ? displayedElo(coasterStats[coasters[i].naam]) : ELO_BASE;
+                    // use displayedRating (regularized) for pairing proximity calculations
+                    const ratingI = (coasterStats && coasterStats[coasters[i].naam]) ? displayedRating(coasterStats[coasters[i].naam]) : GLICKO2_RATING_BASE;
                     const condWeights = new Array(length);
                     for (let k = 0; k < length; k++) {
                         if (k === i) { condWeights[k] = 0; continue; }
                         const nameK = coasters[k].naam;
-                        const eloK = (coasterStats && coasterStats[nameK]) ? displayedElo(coasterStats[nameK]) : ELO_BASE;
-                        const diff = Math.abs(eloI - eloK) / ELO_DIFF_SCALE; // normalized diff (using displayed ELO)
-                        const proximityFactor = 1 / Math.pow(1 + diff, ELO_PROXIMITY_POWER);
+                        const ratingK = (coasterStats && coasterStats[nameK]) ? displayedRating(coasterStats[nameK]) : GLICKO2_RATING_BASE;
+                        const diff = Math.abs(ratingI - ratingK) / RATING_DIFF_SCALE; // normalized diff (using displayed rating)
+                        const proximityFactor = 1 / Math.pow(1 + diff, RATING_PROXIMITY_POWER);
                         const base = isFinite(weights[k]) && weights[k] > 0 ? weights[k] : 1;
                         condWeights[k] = base * proximityFactor;
                     }
@@ -1106,48 +3098,179 @@ const DOM = {};
         return getPairAvoidingDuplicates();
     }
 
-    function calculateElo(winnerElo, loserElo, K = 32) {
-        const expectedWinner = 1 / (1 + Math.pow(10, (loserElo - winnerElo) / 400));
-        const expectedLoser = 1 / (1 + Math.pow(10, (winnerElo - loserElo) / 400));
-        
-        const newWinnerElo = winnerElo + K * (1 - expectedWinner);
-        const newLoserElo = loserElo + K * (0 - expectedLoser);
-        
-        return { newWinnerElo, newLoserElo };
+    // ========================================
+    // GLICKO-2 RATING SYSTEM IMPLEMENTATION
+    // ========================================
+
+    // Convert rating to Glicko-2 scale (μ)
+    function glicko2Scale(rating) {
+        return (rating - GLICKO2_RATING_BASE) / GLICKO2_SCALE_FACTOR;
     }
 
-    // Compute adaptive K based on number of battles (automatic, internal)
-    function computeAdaptiveK(battles) {
-        return Math.max(K_MIN, K0 / (1 + (battles || 0) / K_DECAY_C));
+    // Convert Glicko-2 scale back to rating
+    function glicko2Unscale(mu) {
+        return mu * GLICKO2_SCALE_FACTOR + GLICKO2_RATING_BASE;
     }
 
-    // Displayed ELO with Bayesian-like shrinkage towards population mean
-    function displayedElo(stats) {
-        if (!stats) return ELO_BASE;
+    // Convert RD to Glicko-2 scale (φ)
+    function glicko2ScaleRD(rd) {
+        return rd / GLICKO2_SCALE_FACTOR;
+    }
+
+    // Convert Glicko-2 scale back to RD
+    function glicko2UnscaleRD(phi) {
+        return phi * GLICKO2_SCALE_FACTOR;
+    }
+
+    // g(φ) function - measures impact of opponent's RD
+    function glicko2_g(phi) {
+        return 1 / Math.sqrt(1 + 3 * phi * phi / (Math.PI * Math.PI));
+    }
+
+    // E(μ, μ_j, φ_j) - expected score against opponent
+    function glicko2_E(mu, mu_j, phi_j) {
+        return 1 / (1 + Math.exp(-glicko2_g(phi_j) * (mu - mu_j)));
+    }
+
+    // Calculate new Glicko-2 ratings after a match
+    // Returns: { newWinnerRating, newWinnerRD, newWinnerVolatility, newLoserRating, newLoserRD, newLoserVolatility }
+    function calculateGlicko2(winnerStats, loserStats) {
+        // Extract current values
+        const r1 = winnerStats.rating || GLICKO2_RATING_BASE;
+        const rd1 = winnerStats.rd || GLICKO2_RD_INITIAL;
+        const vol1 = winnerStats.volatility || GLICKO2_VOLATILITY_INITIAL;
+        
+        const r2 = loserStats.rating || GLICKO2_RATING_BASE;
+        const rd2 = loserStats.rd || GLICKO2_RD_INITIAL;
+        const vol2 = loserStats.volatility || GLICKO2_VOLATILITY_INITIAL;
+
+        // Convert to Glicko-2 scale
+        const mu1 = glicko2Scale(r1);
+        const phi1 = glicko2ScaleRD(rd1);
+        const mu2 = glicko2Scale(r2);
+        const phi2 = glicko2ScaleRD(rd2);
+
+        // Calculate winner's new rating (won against loser)
+        const result1 = calculateGlicko2Single(mu1, phi1, vol1, [{ mu: mu2, phi: phi2, score: 1 }]);
+        
+        // Calculate loser's new rating (lost against winner)
+        const result2 = calculateGlicko2Single(mu2, phi2, vol2, [{ mu: mu1, phi: phi1, score: 0 }]);
+
+        return {
+            newWinnerRating: glicko2Unscale(result1.mu),
+            newWinnerRD: glicko2UnscaleRD(result1.phi),
+            newWinnerVolatility: result1.sigma,
+            newLoserRating: glicko2Unscale(result2.mu),
+            newLoserRD: glicko2UnscaleRD(result2.phi),
+            newLoserVolatility: result2.sigma
+        };
+    }
+
+    // Core Glicko-2 calculation for a single player against opponents
+    function calculateGlicko2Single(mu, phi, sigma, opponents) {
+        // Step 1: Calculate v (estimated variance)
+        let v = 0;
+        for (const opp of opponents) {
+            const g_phi_j = glicko2_g(opp.phi);
+            const E_val = glicko2_E(mu, opp.mu, opp.phi);
+            v += g_phi_j * g_phi_j * E_val * (1 - E_val);
+        }
+        v = 1 / v;
+
+        // Step 2: Calculate Δ (estimated improvement in rating)
+        let delta = 0;
+        for (const opp of opponents) {
+            const g_phi_j = glicko2_g(opp.phi);
+            const E_val = glicko2_E(mu, opp.mu, opp.phi);
+            delta += g_phi_j * (opp.score - E_val);
+        }
+        delta *= v;
+
+        // Step 3: Determine new volatility (σ')
+        const sigma_new = calculateVolatility(sigma, phi, v, delta, GLICKO2_TAU);
+
+        // Step 4: Update rating deviation to new pre-rating period value
+        const phi_star = Math.sqrt(phi * phi + sigma_new * sigma_new);
+
+        // Step 5: Update rating and RD
+        const phi_new = 1 / Math.sqrt(1 / (phi_star * phi_star) + 1 / v);
+        
+        let mu_new = mu;
+        for (const opp of opponents) {
+            const g_phi_j = glicko2_g(opp.phi);
+            const E_val = glicko2_E(mu, opp.mu, opp.phi);
+            mu_new += phi_new * phi_new * g_phi_j * (opp.score - E_val);
+        }
+
+        return {
+            mu: mu_new,
+            phi: phi_new,
+            sigma: sigma_new
+        };
+    }
+
+    // Illinois algorithm to determine new volatility
+    function calculateVolatility(sigma, phi, v, delta, tau) {
+        const a = Math.log(sigma * sigma);
+        const delta_sq = delta * delta;
+        const phi_sq = phi * phi;
+        
+        // Define f(x)
+        const f = (x) => {
+            const ex = Math.exp(x);
+            const phi_sq_ex = phi_sq + v + ex;
+            const term1 = ex * (delta_sq - phi_sq - v - ex) / (2 * phi_sq_ex * phi_sq_ex);
+            const term2 = (x - a) / (tau * tau);
+            return term1 - term2;
+        };
+
+        // Initial values
+        let A = a;
+        let B;
+        
+        if (delta_sq > phi_sq + v) {
+            B = Math.log(delta_sq - phi_sq - v);
+        } else {
+            let k = 1;
+            while (f(a - k * tau) < 0) {
+                k++;
+            }
+            B = a - k * tau;
+        }
+
+        let fA = f(A);
+        let fB = f(B);
+
+        // Iterate using Illinois algorithm
+        while (Math.abs(B - A) > GLICKO2_EPSILON) {
+            const C = A + (A - B) * fA / (fB - fA);
+            const fC = f(C);
+
+            if (fC * fB < 0) {
+                A = B;
+                fA = fB;
+            } else {
+                fA = fA / 2;
+            }
+
+            B = C;
+            fB = fC;
+        }
+
+        return Math.exp(A / 2);
+    }
+
+    // Displayed rating with Bayesian-like shrinkage towards population mean (for ranking display)
+    function displayedRating(stats) {
+        if (!stats) return GLICKO2_RATING_BASE;
         const n = stats.battles || 0;
-        if (n === 0) return ELO_BASE;
-        return (stats.elo * n + ELO_BASE * PRIOR_WEIGHT) / (n + PRIOR_WEIGHT);
+        if (n === 0) return GLICKO2_RATING_BASE;
+        return (stats.rating * n + GLICKO2_RATING_BASE * PRIOR_WEIGHT) / (n + PRIOR_WEIGHT);
     }
 
-    // Adaptive ELO calculation using each coaster's battle count to pick K
-    function calculateEloAdaptiveFromStats(winnerStats, loserStats) {
-        const wElo = (winnerStats && typeof winnerStats.elo === 'number') ? winnerStats.elo : ELO_BASE;
-        const lElo = (loserStats && typeof loserStats.elo === 'number') ? loserStats.elo : ELO_BASE;
-        const wBattles = (winnerStats && typeof winnerStats.battles === 'number') ? winnerStats.battles : 0;
-        const lBattles = (loserStats && typeof loserStats.battles === 'number') ? loserStats.battles : 0;
-
-        const Kw = computeAdaptiveK(wBattles);
-        const Kl = computeAdaptiveK(lBattles);
-        const K = Math.max(Kw, Kl);
-
-        const expectedWinner = 1 / (1 + Math.pow(10, (lElo - wElo) / 400));
-        const expectedLoser = 1 - expectedWinner;
-
-        const newWinnerElo = wElo + K * (1 - expectedWinner);
-        const newLoserElo = lElo + K * (0 - expectedLoser);
-
-        return { newWinnerElo, newLoserElo, K };
-    }
+    // ========================================
+    // END GLICKO-2 RATING SYSTEM
+    // ========================================
 
     // Ensure a coaster has an entry in `coasterStats`. Returns the stats object.
     function ensureCoasterStats(coaster) {
@@ -1158,7 +3281,9 @@ const DOM = {};
                 name: name,
                 park: coaster.park || (coaster.park === undefined ? '' : coaster.park),
                 manufacturer: coaster.fabrikant || coaster.manufacturer || '',
-                elo: 1500,
+                rating: GLICKO2_RATING_BASE,
+                rd: GLICKO2_RD_INITIAL,
+                volatility: GLICKO2_VOLATILITY_INITIAL,
                 battles: 0,
                 wins: 0,
                 losses: 0
@@ -1173,12 +3298,8 @@ const DOM = {};
        - Rare trigger once every 25-50 battles (per localStorage)
        - If adjacent and triggered, force a visible swap in ranking
     */
-    const CR_STORAGE_COUNTER = 'cr_rareBattleCounter';
-    const CR_STORAGE_THRESHOLD = 'cr_rareBattleThreshold';
-    function randInt(min, max){ return Math.floor(Math.random()*(max-min+1))+min; }
-    function getCoasterId(c){ return (c && (c.naam || c.name || c.id)) || String(Math.random()); }
-    function getCoasterName(c){ return (c && (c.naam || c.name)) || 'Coaster'; }
-
+    function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+    
     function initCloseBattleSystem(){
         if (localStorage.getItem(CR_STORAGE_COUNTER)===null) localStorage.setItem(CR_STORAGE_COUNTER,'0');
         if (localStorage.getItem(CR_STORAGE_THRESHOLD)===null) localStorage.setItem(CR_STORAGE_THRESHOLD,String(randInt(25,50)));
@@ -1191,8 +3312,8 @@ const DOM = {};
     function findCloseMatchup() {
         const statsArray = Object.values(coasterStats || {});
         if (!statsArray || statsArray.length < 2) return null;
-        // compute sorted ranks by displayedElo
-        const sorted = [...statsArray].sort((a,b) => displayedElo(b) - displayedElo(a));
+        // compute sorted ranks by displayedRating
+        const sorted = [...statsArray].sort((a,b) => displayedRating(b) - displayedRating(a));
         const nameToRank = {};
         sorted.forEach((s, idx) => { nameToRank[s.name] = idx + 1; });
 
@@ -1380,38 +3501,30 @@ const DOM = {};
     // Celebrate a winner by animating the existing card in-place and spawning confetti
     function celebrateWinner(cardEl, winnerName){
         return new Promise((resolve)=>{
-            try{
+            try {
                 if (!cardEl) return resolve();
 
-                // Ensure intro overlay, banner and burst are hidden during celebration.
-                // Save inline styles so we can restore them after celebration (if needed).
-                try {
-                    const overlayEl = document.getElementById('closeBattleOverlay');
-                    const bannerEl = document.getElementById('closeBanner');
-                    const winnerBurst = document.getElementById('winnerBurst');
-                    // store previous inline styles
-                    const prev = {};
-                    if (overlayEl) {
-                        prev.overlayDisplay = overlayEl.style.display;
-                        prev.overlayOpacity = overlayEl.style.opacity;
-                        prev.overlayZ = overlayEl.style.zIndex;
-                        // Remove any visible state and force-hide the overlay immediately using !important
-                        overlayEl.classList.remove('show');
-                        overlayEl.style.setProperty('display', 'none', 'important');
-                        overlayEl.style.setProperty('opacity', '0', 'important');
-                        overlayEl.style.zIndex = '';
-                        overlayEl.setAttribute('aria-hidden', 'true');
-                    }
-                    if (bannerEl) { bannerEl.classList.remove('show'); }
-                    if (winnerBurst) { winnerBurst.classList.remove('show','big'); }
-                    // attach prev store on the card element so we can restore later
-                    cardEl._closeOverlayPrev = prev;
-                } catch (e) {}
+                const overlayEl = document.getElementById('closeBattleOverlay');
+                const bannerEl = document.getElementById('closeBanner');
+                const winnerBurst = document.getElementById('winnerBurst');
+                const prev = {};
+                
+                if (overlayEl) {
+                    prev.overlayDisplay = overlayEl.style.display;
+                    prev.overlayOpacity = overlayEl.style.opacity;
+                    prev.overlayZ = overlayEl.style.zIndex;
+                    overlayEl.classList.remove('show');
+                    overlayEl.style.setProperty('display', 'none', 'important');
+                    overlayEl.style.setProperty('opacity', '0', 'important');
+                    overlayEl.style.zIndex = '';
+                    overlayEl.setAttribute('aria-hidden', 'true');
+                }
+                if (bannerEl) bannerEl.classList.remove('show');
+                if (winnerBurst) winnerBurst.classList.remove('show','big');
+                cardEl._closeOverlayPrev = prev;
 
-                // apply in-place celebration class to scale and bring forward
                 cardEl.classList.add('celebrate-in-place');
 
-                // spawn confetti pieces around center of the card
                 const rect = cardEl.getBoundingClientRect();
                 const cx = rect.left + rect.width / 2;
                 const cy = rect.top + rect.height / 3;
@@ -1419,16 +3532,15 @@ const DOM = {};
                 const colors = ['#ff3f6e','#ffd86b','#6ee7b7','#7dd3fc','#c084fc','#ffc4d6','#ffb86b'];
                 const confettiCount = 36;
                 const confettiEls = [];
-                for (let i=0;i<confettiCount;i++){
+                
+                for (let i = 0; i < confettiCount; i++){
                     const c = document.createElement('div');
                     c.className = 'confetti-piece';
                     const size = 6 + Math.floor(Math.random()*12);
-                    c.style.width = size + 'px'; c.style.height = Math.floor(size*1.2) + 'px';
-                    // randomize start position near the card center
-                    const left = cx + (Math.random()*rect.width - rect.width/2);
-                    const top = cy + (Math.random()*rect.height/2 - rect.height/4);
-                    c.style.left = left + 'px';
-                    c.style.top = top + 'px';
+                    c.style.width = size + 'px';
+                    c.style.height = Math.floor(size*1.2) + 'px';
+                    c.style.left = (cx + (Math.random()*rect.width - rect.width/2)) + 'px';
+                    c.style.top = (cy + (Math.random()*rect.height/2 - rect.height/4)) + 'px';
                     c.style.background = colors[Math.floor(Math.random()*colors.length)];
                     c.style.transform = `translateY(-6px) rotate(${Math.random()*360}deg)`;
                     c.style.animationDuration = (900 + Math.floor(Math.random()*900)) + 'ms';
@@ -1436,36 +3548,35 @@ const DOM = {};
                     confettiEls.push(c);
                 }
 
-                // show winner burst briefly
-                const winnerBurst = document.getElementById('winnerBurst');
                 const winnerText = document.getElementById('winnerText');
                 if (winnerText) winnerText.textContent = `${winnerName} WINS!`;
                 if (winnerBurst) winnerBurst.classList.add('show','big');
 
-                const CELEBRATE_MS = 1400;
                 setTimeout(()=>{
-                    // cleanup
                     try{
                         if (winnerBurst) winnerBurst.classList.remove('show','big');
                         confettiEls.forEach(c => c.remove());
                         cardEl.classList.remove('celebrate-in-place');
-                        // restore overlay inline styles if we saved them
+                        
                         const prev = cardEl._closeOverlayPrev;
                         const overlayEl = document.getElementById('closeBattleOverlay');
                         if (prev && overlayEl) {
-                            // restore prior inline values if they existed, otherwise remove the inline property
-                            if (typeof prev.overlayDisplay !== 'undefined' && prev.overlayDisplay !== null && prev.overlayDisplay !== '') overlayEl.style.display = prev.overlayDisplay; else overlayEl.style.removeProperty('display');
-                            if (typeof prev.overlayOpacity !== 'undefined' && prev.overlayOpacity !== null && prev.overlayOpacity !== '') overlayEl.style.opacity = prev.overlayOpacity; else overlayEl.style.removeProperty('opacity');
-                            if (typeof prev.overlayZ !== 'undefined' && prev.overlayZ !== null && prev.overlayZ !== '') overlayEl.style.zIndex = prev.overlayZ; else overlayEl.style.removeProperty('z-index');
+                            if (prev.overlayDisplay) overlayEl.style.display = prev.overlayDisplay; 
+                            else overlayEl.style.removeProperty('display');
+                            if (prev.overlayOpacity) overlayEl.style.opacity = prev.overlayOpacity; 
+                            else overlayEl.style.removeProperty('opacity');
+                            if (prev.overlayZ) overlayEl.style.zIndex = prev.overlayZ; 
+                            else overlayEl.style.removeProperty('z-index');
                             overlayEl.removeAttribute('aria-hidden');
                             delete cardEl._closeOverlayPrev;
                         }
-                        // restore original VS divider if we hid it earlier
                         try { restoreVsDivider(); } catch(e) {}
                     }catch(e){}
                     resolve();
-                }, CELEBRATE_MS);
-            }catch(e){ resolve(); }
+                }, 1400);
+            } catch(e) { 
+                resolve(); 
+            }
         });
     }
 
@@ -1525,8 +3636,16 @@ const DOM = {};
             localStorage.setItem(CR_STORAGE_COUNTER,'0');
             localStorage.setItem(CR_STORAGE_THRESHOLD,String(randInt(25,50)));
 
-            epicCloseBattleSequence(coasterA, coasterB, rankA, rankB, winnerId).then((forcedSwap)=>{
-                resolve({triggered:true, forcedSwap: !!forcedSwap});
+            // Show the intro overlay first, then the epic sequence
+            showCloseIntro(coasterA, coasterB).then(() => {
+                epicCloseBattleSequence(coasterA, coasterB, rankA, rankB, winnerId).then((forcedSwap)=>{
+                    resolve({triggered:true, forcedSwap: !!forcedSwap});
+                });
+            }).catch(() => {
+                // If intro fails, still show epic sequence
+                epicCloseBattleSequence(coasterA, coasterB, rankA, rankB, winnerId).then((forcedSwap)=>{
+                    resolve({triggered:true, forcedSwap: !!forcedSwap});
+                });
             });
         });
     }
@@ -1550,14 +3669,22 @@ const DOM = {};
     // initialize storage counters
     initCloseBattleSystem();
 
-    function displayBattle() {
-        const vsEl = $id('vsDivider') || document.querySelector('.vs-divider');
-        // ensure battle container visibility helper exists
-        const battleContainerEl = DOM.battleContainer || $id('battleContainer');
-        // If no user selected, show hint and hide VS
+    async function displayBattle() {
+        // Reset resolving state and hide any overlays from previous battles
+        resolvingBattle = false;
+        try {
+            cancelCloseIntro();
+            const overlay = document.getElementById('closeBattleOverlay');
+            if (overlay) {
+                overlay.classList.remove('show');
+                overlay.style.display = 'none';
+            }
+        } catch (e) { /* ignore */ }
+        
+        const battleContainerEl = DOM.battleContainer;
+        // If no user selected, show hint
         if (!currentUser) {
             (DOM.battleContainer || $id('battleContainer')).innerHTML = '<div class="no-battles">Select a user above first! 👆</div>';
-            if (vsEl) vsEl.style.display = 'none';
             try { if (battleContainerEl) battleContainerEl.style.display = 'none'; } catch (e) {}
             currentBattle = null;
             return;
@@ -1566,57 +3693,58 @@ const DOM = {};
         // if there aren't enough active coasters, show a helpful message
         if (!coasters || coasters.length < 2) {
             (DOM.battleContainer || $id('battleContainer')).innerHTML = '<div class="no-battles">No active coasters found for this user. Check your CSV or the "operational" column.</div>';
-            if (vsEl) vsEl.style.display = 'none';
             currentBattle = null;
             return;
         }
 
         // If developer forced a close battle and `currentBattle` is already set, don't overwrite it.
-        if (!devForceCloseBattle || !currentBattle) {
+        // Also check if we have a saved battle from previous session/tab switch
+        if (!currentBattle || (!devForceCloseBattle && currentBattle.length !== 2)) {
             currentBattle = getRandomCoasters();
         }
         const battleContainer = DOM.battleContainer || $id('battleContainer');
         
+        // Save the battle for persistence
+        saveData();
+        
         // Check if no more pairs available
         if (!currentBattle || currentBattle.length === 0) {
             battleContainer.innerHTML = '<div class="no-battles">🎉 Congratulations!<br><br>You have completed all possible matchups!<br><br>Check the ranking tab to see your final list.</div>';
-            if (vsEl) vsEl.style.display = 'none';
             return;
         }
 
-        // show VS divider when an active battle is present
-        if (vsEl) vsEl.style.display = 'flex';
         try { if (battleContainerEl) battleContainerEl.style.display = ''; } catch (e) {}
         
-        // Get current rankings for both coasters
-        const getRanking = (coasterName) => {
+        // Get current rankings for both coasters (cache sorted array)
+        const statsArray = Object.values(coasterStats);
+        const sortedByRating = [...statsArray].sort((a, b) => b.rating - a.rating);
+    function getRanking(coasterName) {
+        if (!sortedByRating) {
             const statsArray = Object.values(coasterStats);
-            const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
-            const rank = sorted.findIndex(c => c.name === coasterName) + 1;
-            return rank;
-        };
+            sortedByRating = [...statsArray].sort((a, b) => b.rating - a.rating);
+        }
+        return sortedByRating.findIndex(c => c.name === coasterName) + 1;
+    }
         
         const rank1 = getRanking(currentBattle[0].naam);
         const rank2 = getRanking(currentBattle[1].naam);
         
         // dev data calculations
         const left = currentBattle[0], right = currentBattle[1];
-        const leftStats = coasterStats[left.naam] || { elo:1500, battles:0, wins:0, losses:0 };
-        const rightStats = coasterStats[right.naam] || { elo:1500, battles:0, wins:0, losses:0 };
-        // compute ELO scenarios once
-        const leftIfWin = calculateEloAdaptiveFromStats(leftStats, rightStats);
-        const leftIfLose = calculateEloAdaptiveFromStats(rightStats, leftStats);
-        const rightIfWin = calculateEloAdaptiveFromStats(rightStats, leftStats);
-        const rightIfLose = calculateEloAdaptiveFromStats(leftStats, rightStats);
-        const leftGainWin = Math.round(leftIfWin.newWinnerElo - leftStats.elo);
-        const leftLoseIfLose = Math.round(leftIfLose.newLoserElo - leftStats.elo);
-        const rightGainWin = Math.round(rightIfWin.newWinnerElo - rightStats.elo);
-        const rightLoseIfLose = Math.round(rightIfLose.newLoserElo - rightStats.elo);
+        const leftStats = coasterStats[left.naam] || { rating:GLICKO2_RATING_BASE, rd:GLICKO2_RD_INITIAL, volatility:GLICKO2_VOLATILITY_INITIAL, battles:0, wins:0, losses:0 };
+        const rightStats = coasterStats[right.naam] || { rating:GLICKO2_RATING_BASE, rd:GLICKO2_RD_INITIAL, volatility:GLICKO2_VOLATILITY_INITIAL, battles:0, wins:0, losses:0 };
+        // compute Glicko-2 scenarios once
+        const leftIfWin = calculateGlicko2(leftStats, rightStats);
+        const leftIfLose = calculateGlicko2(rightStats, leftStats);
+        const leftGainWin = Math.round(leftIfWin.newWinnerRating - leftStats.rating);
+        const leftLoseIfLose = Math.round(leftIfLose.newLoserRating - leftStats.rating);
+        const rightGainWin = Math.round(leftIfLose.newWinnerRating - rightStats.rating);
+        const rightLoseIfLose = Math.round(leftIfWin.newLoserRating - rightStats.rating);
         const fmt = (n) => (n >= 0 ? '+' + n : n.toString());
         
         const devLeftHtml = `
             <div><strong>Rank:</strong> ${rank1}</div>
-            <div><strong>ELO:</strong> ${Math.round(leftStats.elo)}</div>
+            <div><strong>Rating:</strong> ${Math.round(leftStats.rating)} ± ${Math.round(leftStats.rd)}</div>
             <div><strong>Δ (win):</strong> ${fmt(leftGainWin)}</div>
             <div><strong>Δ (lose):</strong> ${fmt(leftLoseIfLose)}</div>
             <div><strong>Battles:</strong> ${leftStats.battles}</div>
@@ -1625,7 +3753,7 @@ const DOM = {};
         `;
         const devRightHtml = `
             <div><strong>Rank:</strong> ${rank2}</div>
-            <div><strong>ELO:</strong> ${Math.round(rightStats.elo)}</div>
+            <div><strong>Rating:</strong> ${Math.round(rightStats.rating)} ± ${Math.round(rightStats.rd)}</div>
             <div><strong>Δ (win):</strong> ${fmt(rightGainWin)}</div>
             <div><strong>Δ (lose):</strong> ${fmt(rightLoseIfLose)}</div>
             <div><strong>Battles:</strong> ${rightStats.battles}</div>
@@ -1639,11 +3767,32 @@ const DOM = {};
         const parkClass = matchingPark ? 'match-highlight' : '';
         const fabrikantClass = matchingFabrikant ? 'match-highlight' : '';
         
-        // Render only the cards; dev-data will be positioned separately (desktop) or in-flow (mobile)
+        // Load images first and wait for them to be ready
+        const leftImageUrl = getCoasterImageSync(left);
+        const rightImageUrl = getCoasterImageSync(right);
+        
+        // Preload both images to ensure they're ready before rendering
+        await Promise.all([
+            preloadImage(leftImageUrl),
+            preloadImage(rightImageUrl)
+        ]);
+        
+        // Start background preloading for next battles
+        setTimeout(() => preloadNextBattles(), 50);
+        
+        // Check if this is a close fight (will be used for banner)
+        const leftStatsForCheck = coasterStats[left.naam] || { battles: 0 };
+        const rightStatsForCheck = coasterStats[right.naam] || { battles: 0 };
+        const isCloseFightMatch = ((Math.abs(rank1 - rank2) <= 3) && (leftStatsForCheck.battles >= 3) && (rightStatsForCheck.battles >= 3));
+        
+        // Render cards with images already loaded
         battleContainer.innerHTML = `
+            ${isCloseFightMatch ? '<div class="close-fight-banner">⚔️ CLOSE FIGHT ⚔️</div>' : ''}
             <div class="coaster-item">
-                <div class="coaster-card left-card" onclick="chooseWinner(0)">
-                    <div class="coaster-image">IMG</div>
+                <div class="coaster-card left-card" data-choice="0">
+                    <div class="coaster-image">
+                        <img class="coaster-img" src="${leftImageUrl}" alt="${escapeHtml(left.naam)}" />
+                    </div>
                     <div class="coaster-rank-badge">${rank1}</div>
                     <div class="coaster-content">
                         <div class="coaster-name">${left.naam}</div>
@@ -1657,8 +3806,10 @@ const DOM = {};
             </div>
             
             <div class="coaster-item">
-                <div class="coaster-card right-card" onclick="chooseWinner(1)">
-                    <div class="coaster-image">IMG</div>
+                <div class="coaster-card right-card" data-choice="1">
+                    <div class="coaster-image">
+                        <img class="coaster-img" src="${rightImageUrl}" alt="${escapeHtml(right.naam)}" />
+                    </div>
                     <div class="coaster-rank-badge">${rank2}</div>
                     <div class="coaster-content">
                         <div class="coaster-name">${right.naam}</div>
@@ -1671,18 +3822,33 @@ const DOM = {};
                 </div>
             </div>
         `;
+        
+        // Add click handlers AFTER rendering (gives better control over event propagation)
+        const coasterCards = battleContainer.querySelectorAll('.coaster-card');
+        coasterCards.forEach(card => {
+            card.addEventListener('click', (e) => {
+                // STRICT CHECK: Do NOT trigger if clicking inside dev-data overlay
+                const clickedOverlay = e.target.classList.contains('dev-data-overlay') || e.target.closest('.dev-data-overlay');
+                if (clickedOverlay) {
+                    return; // Do nothing
+                }
+                
+                const choice = parseInt(card.getAttribute('data-choice'));
+                chooseWinner(choice);
+            });
+        });
 
         // If this matchup qualifies as a close fight, play the intro animation
         const getRankingNum = (coasterName) => {
             const statsArray = Object.values(coasterStats);
-            const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
+            const sorted = [...statsArray].sort((a, b) => b.rating - a.rating);
             return sorted.findIndex(c => c.name === coasterName) + 1;
         };
         const r1 = getRankingNum(left.naam);
         const r2 = getRankingNum(right.naam);
         const leftStatsObj = coasterStats[left.naam] || { battles: 0 };
         const rightStatsObj = coasterStats[right.naam] || { battles: 0 };
-        const isCloseEligible = ((Math.abs(r1 - r2) < 3) && (leftStatsObj.battles > 3) && (rightStatsObj.battles > 3));
+        const isCloseEligible = ((Math.abs(r1 - r2) <= 3) && (leftStatsObj.battles >= 3) && (rightStatsObj.battles >= 3));
         // Determine whether an epic intro will fire on the next battle (rare event)
         function willEpicTriggerOnNext(){
             try{
@@ -1692,21 +3858,15 @@ const DOM = {};
             }catch(e){ return false; }
         }
 
-        const willEpic = devForceCloseBattle || willEpicTriggerOnNext();
-
-        if (isCloseEligible) {
-            if (willEpic) {
-                // full intro sequence only for epic or dev forced
-                try { if (closeIntroTimeout) { clearTimeout(closeIntroTimeout); closeIntroTimeout = null; } } catch (e) {}
-                closeIntroTimeout = setTimeout(() => { closeIntroTimeout = null; showCloseIntro(left, right).catch(()=>{}); }, 60);
-            } else {
-                // regular close matchup: subtle highlight only
-                const cards = document.querySelectorAll('.coaster-card');
-                if (cards[0]) cards[0].classList.add('close-subtle');
-                if (cards[1]) cards[1].classList.add('close-subtle');
-                // remove subtle after a short while so it doesn't persist
-                setTimeout(()=>{ if (cards[0]) cards[0].classList.remove('close-subtle'); if (cards[1]) cards[1].classList.remove('close-subtle'); }, 1600);
-            }
+        // If dev forced a close battle, show intro immediately (before cards are visible)
+        if (devForceCloseBattle) {
+            try { if (closeIntroTimeout) { clearTimeout(closeIntroTimeout); closeIntroTimeout = null; } } catch (e) {}
+            // Trigger intro immediately with no delay
+            showCloseIntro(left, right).catch(()=>{});
+        } else if (isCloseEligible) {
+            // Always show the full intro sequence for close fights
+            try { if (closeIntroTimeout) { clearTimeout(closeIntroTimeout); closeIntroTimeout = null; } } catch (e) {}
+            closeIntroTimeout = setTimeout(() => { closeIntroTimeout = null; showCloseIntro(left, right).catch(()=>{}); }, 60);
         }
 
         // Delegate overlay rendering to a dedicated function so we can update without reselecting the pair
@@ -1715,14 +3875,12 @@ const DOM = {};
         setTimeout(syncSimInputWidth, 0);
     }
 
-    // Explicitly hide/show the battle UI (cards + VS badge). Use this from tab switching
+    // Explicitly hide/show the battle UI (cards). Use this from tab switching
     function setBattleVisibility(visible) {
-        const battleContainerEl = DOM.battleContainer || $id('battleContainer');
-        const vsEl = $id('vsDivider') || document.querySelector('.vs-divider');
+        const battleContainerEl = DOM.battleContainer;
         try {
             if (battleContainerEl) battleContainerEl.style.display = visible ? '' : 'none';
         } catch (e) {}
-        try { if (vsEl) vsEl.style.display = visible ? 'flex' : 'none'; } catch (e) {}
     }
 
     function chooseWinner(index) {
@@ -1737,41 +3895,48 @@ const DOM = {};
         const winner = currentBattle[index];
         const loser = currentBattle[1 - index];
 
-        // ranking helper
+        // ranking helper (cache sorted array for efficiency)
+        const statsArray = Object.values(coasterStats);
+        const sortedStats = [...statsArray].sort((a, b) => b.rating - a.rating);
         const getRanking = (coasterName) => {
-            const statsArray = Object.values(coasterStats);
-            const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
-            const rank = sorted.findIndex(c => c.name === coasterName) + 1;
-            return rank;
+            return sortedStats.findIndex(c => c.name === coasterName) + 1;
         };
 
         const oldWinnerRank = getRanking(winner.naam);
         const oldLoserRank = getRanking(loser.naam);
 
         // ensure stats exist
-        const winnerStats = ensureCoasterStats(winner) || { elo:1500, battles:0, wins:0, losses:0 };
-        const loserStats = ensureCoasterStats(loser) || { elo:1500, battles:0, wins:0, losses:0 };
+        const winnerStats = ensureCoasterStats(winner) || { rating:GLICKO2_RATING_BASE, rd:GLICKO2_RD_INITIAL, volatility:GLICKO2_VOLATILITY_INITIAL, battles:0, wins:0, losses:0 };
+        const loserStats = ensureCoasterStats(loser) || { rating:GLICKO2_RATING_BASE, rd:GLICKO2_RD_INITIAL, volatility:GLICKO2_VOLATILITY_INITIAL, battles:0, wins:0, losses:0 };
 
-        // Capture ELO values BEFORE battle
-        const winnerEloBefore = winnerStats.elo;
-        const loserEloBefore = loserStats.elo;
+        // Capture rating values BEFORE battle
+        const winnerRatingBefore = winnerStats.rating;
+        const loserRatingBefore = loserStats.rating;
+        const winnerRDBefore = winnerStats.rd;
+        const loserRDBefore = loserStats.rd;
+        const winnerVolatilityBefore = winnerStats.volatility;
+        const loserVolatilityBefore = loserStats.volatility;
 
-        // compute ELO outcome and potential changes
-        const eloOutcome = calculateEloAdaptiveFromStats(winnerStats, loserStats);
-        const { newWinnerElo, newLoserElo, K } = eloOutcome;
+        // compute Glicko-2 outcome
+        const glickoOutcome = calculateGlicko2(winnerStats, loserStats);
+        const { newWinnerRating, newWinnerRD, newWinnerVolatility, newLoserRating, newLoserRD, newLoserVolatility } = glickoOutcome;
         
-        // Calculate expected win probabilities
-        const expectedWinnerProb = 1 / (1 + Math.pow(10, (loserEloBefore - winnerEloBefore) / 400));
+        // Calculate expected win probabilities (using Glicko-2 scale)
+        const mu1 = glicko2Scale(winnerRatingBefore);
+        const phi1 = glicko2ScaleRD(winnerRDBefore);
+        const mu2 = glicko2Scale(loserRatingBefore);
+        const phi2 = glicko2ScaleRD(loserRDBefore);
+        const expectedWinnerProb = glicko2_E(mu1, mu2, phi2);
         const expectedLoserProb = 1 - expectedWinnerProb;
         
         // Calculate potential gains/losses for both outcomes
-        const winnerPotentialGain = newWinnerElo - winnerEloBefore;
-        const loserPotentialLoss = newLoserElo - loserEloBefore;
+        const winnerPotentialGain = newWinnerRating - winnerRatingBefore;
+        const loserPotentialLoss = newLoserRating - loserRatingBefore;
         
         // Calculate what would happen if loser won instead
-        const loserIfWinOutcome = calculateEloAdaptiveFromStats(loserStats, winnerStats);
-        const loserPotentialGain = loserIfWinOutcome.newWinnerElo - loserEloBefore;
-        const winnerPotentialLoss = loserIfWinOutcome.newLoserElo - winnerEloBefore;
+        const loserIfWinOutcome = calculateGlicko2(loserStats, winnerStats);
+        const loserPotentialGain = loserIfWinOutcome.newWinnerRating - loserRatingBefore;
+        const winnerPotentialLoss = loserIfWinOutcome.newLoserRating - winnerRatingBefore;
 
         const winnerId = getCoasterId(winner);
 
@@ -1779,22 +3944,41 @@ const DOM = {};
         triggerCloseBattleIfNeeded(winner, loser, oldWinnerRank, oldLoserRank, winnerId).then(({triggered, forcedSwap}) => {
             // apply ranking changes
             if (forcedSwap) {
-                // force winner to be above loser regardless of ELO calculation
-                const baseLoserElo = (loserStats && typeof loserStats.elo === 'number') ? loserStats.elo : ELO_BASE;
-                winnerStats.elo = baseLoserElo + 2;
-                loserStats.elo = baseLoserElo - 1;
+                // Check if normal Glicko-2 calculation would already cause a position swap
+                if (newWinnerRating > newLoserRating) {
+                    // Normal calculation already results in winner being above loser - use it to maintain consistency
+                    winnerStats.rating = newWinnerRating;
+                    winnerStats.rd = newWinnerRD;
+                    winnerStats.volatility = newWinnerVolatility;
+                    loserStats.rating = newLoserRating;
+                    loserStats.rd = newLoserRD;
+                    loserStats.volatility = newLoserVolatility;
+                } else {
+                    // Force winner to be above loser (only when necessary)
+                    const baseLoserRating = (loserStats && typeof loserStats.rating === 'number') ? loserStats.rating : GLICKO2_RATING_BASE;
+                    winnerStats.rating = baseLoserRating + 2;
+                    winnerStats.rd = newWinnerRD;
+                    winnerStats.volatility = newWinnerVolatility;
+                    loserStats.rating = baseLoserRating - 1;
+                    loserStats.rd = newLoserRD;
+                    loserStats.volatility = newLoserVolatility;
+                }
             } else {
-                winnerStats.elo = newWinnerElo;
-                loserStats.elo = newLoserElo;
+                winnerStats.rating = newWinnerRating;
+                winnerStats.rd = newWinnerRD;
+                winnerStats.volatility = newWinnerVolatility;
+                loserStats.rating = newLoserRating;
+                loserStats.rd = newLoserRD;
+                loserStats.volatility = newLoserVolatility;
             }
 
             winnerStats.battles++; winnerStats.wins++;
             loserStats.battles++; loserStats.losses++;
             totalBattlesCount++;
 
-            // Get ranks after ELO changes
-            const newWinnerRank = getRanking(winner.naam);
-            const newLoserRank = getRanking(loser.naam);
+            // Get ranks after rating changes
+            const newWinnerRank = getCoasterRank(winner.naam);
+            const newLoserRank = getCoasterRank(loser.naam);
             
             // Determine if this was a close fight
             const wasCloseMatchFlag = Math.abs(oldWinnerRank - oldLoserRank) < 3;
@@ -1802,9 +3986,12 @@ const DOM = {};
             // Build comprehensive battle stats for storage
             const battleStats = {
                 statsA: {
-                    eloBefore: (currentBattle[0].naam === winner.naam) ? winnerEloBefore : loserEloBefore,
-                    eloAfter: (currentBattle[0].naam === winner.naam) ? winnerStats.elo : loserStats.elo,
-                    kFactor: K,
+                    ratingBefore: (currentBattle[0].naam === winner.naam) ? winnerRatingBefore : loserRatingBefore,
+                    ratingAfter: (currentBattle[0].naam === winner.naam) ? winnerStats.rating : loserStats.rating,
+                    rdBefore: (currentBattle[0].naam === winner.naam) ? winnerRDBefore : loserRDBefore,
+                    rdAfter: (currentBattle[0].naam === winner.naam) ? winnerStats.rd : loserStats.rd,
+                    volatilityBefore: (currentBattle[0].naam === winner.naam) ? winnerVolatilityBefore : loserVolatilityBefore,
+                    volatilityAfter: (currentBattle[0].naam === winner.naam) ? winnerStats.volatility : loserStats.volatility,
                     potentialGain: (currentBattle[0].naam === winner.naam) ? winnerPotentialGain : loserPotentialGain,
                     potentialLoss: (currentBattle[0].naam === winner.naam) ? winnerPotentialLoss : loserPotentialLoss,
                     rankBefore: (currentBattle[0].naam === winner.naam) ? oldWinnerRank : oldLoserRank,
@@ -1813,9 +4000,12 @@ const DOM = {};
                     totalBattlesBefore: (currentBattle[0].naam === winner.naam) ? winnerStats.battles - 1 : loserStats.battles - 1
                 },
                 statsB: {
-                    eloBefore: (currentBattle[1].naam === winner.naam) ? winnerEloBefore : loserEloBefore,
-                    eloAfter: (currentBattle[1].naam === winner.naam) ? winnerStats.elo : loserStats.elo,
-                    kFactor: K,
+                    ratingBefore: (currentBattle[1].naam === winner.naam) ? winnerRatingBefore : loserRatingBefore,
+                    ratingAfter: (currentBattle[1].naam === winner.naam) ? winnerStats.rating : loserStats.rating,
+                    rdBefore: (currentBattle[1].naam === winner.naam) ? winnerRDBefore : loserRDBefore,
+                    rdAfter: (currentBattle[1].naam === winner.naam) ? winnerStats.rd : loserStats.rd,
+                    volatilityBefore: (currentBattle[1].naam === winner.naam) ? winnerVolatilityBefore : loserVolatilityBefore,
+                    volatilityAfter: (currentBattle[1].naam === winner.naam) ? winnerStats.volatility : loserStats.volatility,
                     potentialGain: (currentBattle[1].naam === winner.naam) ? winnerPotentialGain : loserPotentialGain,
                     potentialLoss: (currentBattle[1].naam === winner.naam) ? winnerPotentialLoss : loserPotentialLoss,
                     rankBefore: (currentBattle[1].naam === winner.naam) ? oldWinnerRank : oldLoserRank,
@@ -1830,15 +4020,21 @@ const DOM = {};
             recordBattle(currentBattle[0], currentBattle[1], winner.naam, loser.naam, { battleStats });
             saveData();
 
+            // Update daily quest and session stats
+            updateDailyQuest();
+            updateSessionStats(wasCloseMatchFlag);
+
             // Track for achievements
-            const wasCloseFight = Math.abs(oldWinnerRank - oldLoserRank) < 3;
+            const wasCloseFight = Math.abs(oldWinnerRank - oldLoserRank) <= 3;
             const perfectMatch = (winner.park === loser.park) && 
                                (winner.fabrikant === loser.fabrikant) &&
                                winner.park && loser.park && 
                                winner.fabrikant && loser.fabrikant;
+            // Check if underdog won (lower-ranked coaster won in a close fight)
+            const underdogWon = wasCloseFight && (oldWinnerRank > oldLoserRank);
             
             if (typeof achievementManager !== 'undefined') {
-                achievementManager.recordBattle(index, perfectMatch, wasCloseFight, currentBattle[0].naam, currentBattle[1].naam);
+                achievementManager.recordBattle(index, perfectMatch, wasCloseFight, currentBattle[0].naam, currentBattle[1].naam, underdogWon);
             }
 
             // Visual feedback on cards
@@ -1854,7 +4050,7 @@ const DOM = {};
                 badge.className = 'rank-change-badge';
                 badge.innerHTML = `<span class="arrow">↑</span><span>+${rankChange}</span>`;
                 if (cards[index]) { cards[index].style.position = 'relative'; cards[index].appendChild(badge); }
-                setTimeout(() => { if (badge.parentElement) badge.remove(); }, 4000);
+                setTimeout(() => { if (badge.parentElement) badge.remove(); }, 2000);
             }
 
             // refresh ranking table and animate swap if the relative ordering changed between these two
@@ -1891,14 +4087,17 @@ const DOM = {};
                 celebrateWinner(cardEl, winner.naam).then(()=>{
                     // Check achievements after celebration
                     checkAndShowAchievements();
+                    // Clear current battle before displaying next one
+                    currentBattle = null;
                     // small pause then continue
-                    setTimeout(()=>{ try{ restoreVsDivider(); }catch(e){} displayBattle(); isProcessingChoice = false; resolvingBattle = false; }, 220);
+                    setTimeout(()=>{ displayBattle(); isProcessingChoice = false; resolvingBattle = false; }, 150);
                 });
             } else {
                 // delay before next battle: celebrate longer if we triggered epic
-                const DELAY = triggered ? 1800 : 1500;
+                const DELAY = triggered ? 1000 : 800;
+                // Clear current battle before displaying next one
+                currentBattle = null;
                 setTimeout(()=>{ 
-                    try{ restoreVsDivider(); }catch(e){} 
                     displayBattle(); 
                     isProcessingChoice = false; 
                     resolvingBattle = false;
@@ -1909,7 +4108,9 @@ const DOM = {};
         }).catch((e)=>{
             console.error('close-battle flow error', e);
             // fallback apply normally (without comprehensive stats since this is error recovery)
-            winnerStats.elo = newWinnerElo; loserStats.elo = newLoserElo;
+            winnerStats.rating = newWinnerRating; loserStats.rating = newLoserRating;
+            winnerStats.rd = newWinnerRd; loserStats.rd = newLoserRd;
+            winnerStats.volatility = newWinnerVolatility; loserStats.volatility = newLoserVolatility;
             winnerStats.battles++; winnerStats.wins++; loserStats.battles++; loserStats.losses++; totalBattlesCount++;
             recordBattle(currentBattle[0], currentBattle[1], winner.naam, loser.naam); // Basic record without stats
             saveData(); updateRanking(); displayBattle(); isProcessingChoice = false;
@@ -1922,13 +4123,14 @@ const DOM = {};
         if (!currentUser) return;
         
         // Number key navigation (1-4 for tabs)
-        if (['1', '2', '3', '4'].includes(event.key)) {
+        if (['1', '2', '3', '4', '5'].includes(event.key)) {
             event.preventDefault();
             const tabMap = {
-                '1': 'battle',
-                '2': 'ranking',
-                '3': 'history',
-                '4': 'achievements'
+                '1': 'home',
+                '2': 'battle',
+                '3': 'ranking',
+                '4': 'history',
+                '5': 'achievements'
             };
             achievementManager.usedNumberKeys = 1;
             switchTab(tabMap[event.key]);
@@ -1943,10 +4145,20 @@ const DOM = {};
         if (event.key === 'ArrowLeft') {
             event.preventDefault();
             achievementManager.usedKeyboard = 1;
+            // Detect keyboard usage for more aggressive preloading
+            if (!keyboardUsageDetected) {
+                keyboardUsageDetected = true;
+                console.log('🚀 Keyboard mode detected - increasing preload queue');
+            }
             chooseWinner(0);
         } else if (event.key === 'ArrowRight') {
             event.preventDefault();
             achievementManager.usedKeyboard = 1;
+            // Detect keyboard usage for more aggressive preloading
+            if (!keyboardUsageDetected) {
+                keyboardUsageDetected = true;
+                console.log('🚀 Keyboard mode detected - increasing preload queue');
+            }
             chooseWinner(1);
         }
     });
@@ -2035,14 +4247,256 @@ const DOM = {};
         }
     });
 
+    // ============================================
+    // HOME TAB FUNCTIONALITY
+    // ============================================
+
+    // Daily quest tracking
+    let dailyQuestProgress = 0;
+    let lastQuestResetDate = null;
+
+    function loadDailyQuest() {
+        if (!currentUser) return;
+        
+        const today = new Date().toDateString();
+        const savedDate = localStorage.getItem(`dailyQuestDate_${currentUser}`);
+        const savedProgress = parseInt(localStorage.getItem(`dailyQuestProgress_${currentUser}`)) || 0;
+        
+        // Reset if it's a new day
+        if (savedDate !== today) {
+            dailyQuestProgress = 0;
+            localStorage.setItem(`dailyQuestDate_${currentUser}`, today);
+            localStorage.setItem(`dailyQuestProgress_${currentUser}`, '0');
+        } else {
+            dailyQuestProgress = savedProgress;
+        }
+        
+        lastQuestResetDate = today;
+    }
+
+    function updateDailyQuest() {
+        if (!currentUser) return;
+        
+        const today = new Date().toDateString();
+        
+        // Check if we need to reset for a new day
+        if (lastQuestResetDate !== today) {
+            loadDailyQuest();
+        }
+        
+        dailyQuestProgress = Math.min(dailyQuestProgress + 1, 25);
+        localStorage.setItem(`dailyQuestProgress_${currentUser}`, dailyQuestProgress.toString());
+        
+        // Update UI if on home tab
+        const questFill = document.getElementById('questProgressFill');
+        const questText = document.getElementById('questProgressText');
+        
+        if (questFill && questText) {
+            const percentage = (dailyQuestProgress / 25) * 100;
+            questFill.style.width = percentage + '%';
+            questText.textContent = `${dailyQuestProgress}/25 battles`;
+        }
+    }
+
+    // Session stats tracking
+    let sessionBattles = 0;
+    let sessionCloseFights = 0;
+
+    function resetSessionStats() {
+        sessionBattles = 0;
+        sessionCloseFights = 0;
+    }
+
+    function updateSessionStats(isCloseFight = false) {
+        sessionBattles++;
+        if (isCloseFight) sessionCloseFights++;
+        
+        // Update UI if on home tab
+        const sessionBattlesEl = document.getElementById('sessionBattles');
+        const sessionCloseFightsEl = document.getElementById('sessionCloseFights');
+        
+        if (sessionBattlesEl) sessionBattlesEl.textContent = sessionBattles;
+        if (sessionCloseFightsEl) sessionCloseFightsEl.textContent = sessionCloseFights;
+    }
+
+    function displayHome() {
+        if (!currentUser) {
+            // Show welcome state without user
+            const welcomeEl = document.getElementById('homeWelcome');
+            if (welcomeEl) welcomeEl.textContent = 'Welcome to Coaster Ranker!';
+            
+            // Show placeholder content
+            document.getElementById('homeTotalBattles').textContent = '0';
+            document.getElementById('homeTotalCoasters').textContent = '0';
+            document.getElementById('homeProgressMatchups').textContent = '0/0';
+            document.getElementById('homeProgressPercentage').textContent = '0%';
+            document.getElementById('questProgressFill').style.width = '0%';
+            document.getElementById('questProgressText').textContent = '0/25 battles';
+            document.getElementById('homeTop3').innerHTML = '<div class="no-battles">Select a user first! 👆</div>';
+            document.getElementById('homeAchievementCount').textContent = '0/0';
+            document.getElementById('homeRecentAchievements').innerHTML = '';
+            document.getElementById('sessionBattles').textContent = '0';
+            document.getElementById('sessionCloseFights').textContent = '0';
+            return;
+        }
+
+        // Update welcome message
+        const welcomeEl = document.getElementById('homeWelcome');
+        const userName = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
+        if (welcomeEl) welcomeEl.textContent = `Welcome, ${userName}!`;
+
+        // Update profile stats (moved from ranking tab)
+        const statsArray = Object.values(coasterStats);
+        const totalCoasters = statsArray.length;
+        const totalBattles = totalBattlesCount;
+        
+        const totalPossible = getTotalPossiblePairs();
+        const completed = completedPairs.size;
+        const progressPercentage = totalPossible > 0 ? ((completed / totalPossible) * 100).toFixed(1) : 0;
+        
+        document.getElementById('homeTotalBattles').textContent = totalBattles;
+        document.getElementById('homeTotalCoasters').textContent = totalCoasters;
+        document.getElementById('homeProgressMatchups').textContent = `${completed}/${totalPossible}`;
+        document.getElementById('homeProgressPercentage').textContent = `${progressPercentage}%`;
+
+    // Update ranking tab stats bar
+    const rankingTotalCoasters = document.getElementById('rankingTotalCoasters');
+    const rankingProgressMatchups = document.getElementById('rankingProgressMatchups');
+    if (rankingTotalCoasters) rankingTotalCoasters.textContent = totalCoasters;
+    if (rankingProgressMatchups) rankingProgressMatchups.textContent = `${completed}/${totalPossible}`;
+
+        // Update daily quest
+        loadDailyQuest();
+        const questPercentage = (dailyQuestProgress / 25) * 100;
+        document.getElementById('questProgressFill').style.width = questPercentage + '%';
+        document.getElementById('questProgressText').textContent = `${dailyQuestProgress}/25 battles`;
+
+        // Update top 3 coasters
+        const top3Container = document.getElementById('homeTop3');
+        if (totalBattles === 0) {
+            top3Container.innerHTML = '<div class="no-battles">Start battling to see your favorites!</div>';
+        } else {
+            const sorted = [...statsArray].sort((a, b) => displayedRating(b) - displayedRating(a));
+            const top3 = sorted.slice(0, 3);
+            
+            const html = top3.map((coaster, index) => {
+                const rank = index + 1;
+                const rankClass = `rank-${rank}`;
+                const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : '🥉';
+                return `
+                    <div class="top-coaster-item">
+                        <div class="top-coaster-rank ${rankClass}">${medal}</div>
+                        <div class="top-coaster-info">
+                            <div class="top-coaster-name">${coaster.name}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            top3Container.innerHTML = html;
+        }
+
+        // Update achievements
+        try {
+            const totalAchievements = Object.keys(ACHIEVEMENTS).length;
+            const unlockedCount = achievementManager.getUnlockedCount();
+            document.getElementById('homeAchievementCount').textContent = `${unlockedCount}/${totalAchievements}`;
+            
+            // Show 3 most recent achievements
+            const recent = achievementManager.getRecentAchievements(3);
+            const recentHtml = recent.map(ach => 
+                `<div class="recent-achievement-icon" title="${ach.name}">${ach.icon}</div>`
+            ).join('');
+            document.getElementById('homeRecentAchievements').innerHTML = recentHtml || '<div style="text-align:center;color:#999;font-size:0.9em;">No achievements yet</div>';
+        } catch (e) {
+            document.getElementById('homeAchievementCount').textContent = '0/0';
+            document.getElementById('homeRecentAchievements').innerHTML = '';
+        }
+
+        // Update session stats
+        document.getElementById('sessionBattles').textContent = sessionBattles;
+        document.getElementById('sessionCloseFights').textContent = sessionCloseFights;
+        
+        // Match tab heights after content is rendered
+        setTimeout(() => matchTabHeights(), 50);
+    }
+
+    function matchTabHeights() {
+        // Match all tabs to profile tab height
+        const profileTab = document.getElementById('home-tab');
+        const battleTab = document.getElementById('battle-tab');
+        const rankingTab = document.getElementById('ranking-tab');
+        const historyTab = document.getElementById('history-tab');
+        const achievementsTab = document.getElementById('achievements-tab');
+        
+        if (profileTab) {
+            // Temporarily make profile visible to measure it
+            const wasProfileActive = profileTab.classList.contains('active');
+            
+            // Make profile visible (but keep it off-screen if it wasn't active)
+            if (!wasProfileActive) {
+                profileTab.style.position = 'absolute';
+                profileTab.style.visibility = 'hidden';
+                profileTab.style.display = 'block';
+            }
+            
+            // Force a reflow to ensure measurement is accurate
+            profileTab.offsetHeight;
+            
+            // Get the actual computed height of the profile tab
+            const profileHeight = profileTab.scrollHeight;
+            
+            // Restore profile tab state
+            if (!wasProfileActive) {
+                profileTab.style.position = '';
+                profileTab.style.visibility = '';
+                profileTab.style.display = '';
+            }
+            
+            // Set all tabs to match (use height, not min-height, to force exact match)
+            // Enable overflow-y auto so content scrolls instead of the page
+            if (battleTab) {
+                battleTab.style.height = profileHeight + 'px';
+                battleTab.style.overflowY = 'hidden';
+            }
+            if (rankingTab) {
+                rankingTab.style.height = profileHeight + 'px';
+                rankingTab.style.overflowY = 'auto';
+            }
+            if (historyTab) {
+                historyTab.style.height = profileHeight + 'px';
+                historyTab.style.overflowY = 'auto';
+            }
+            if (achievementsTab) {
+                achievementsTab.style.height = profileHeight + 'px';
+                achievementsTab.style.overflowY = 'auto';
+            }
+        }
+    }
+
     function switchTab(tabName) {
+        // Save the current tab to localStorage
+        try {
+            localStorage.setItem('lastActiveTab', tabName);
+        } catch (e) { /* ignore */ }
+        
+        // Always hide close battle overlay when switching tabs
+        try {
+            cancelCloseIntro();
+            const overlay = document.getElementById('closeBattleOverlay');
+            if (overlay) {
+                overlay.classList.remove('show');
+                overlay.style.display = 'none';
+            }
+        } catch (e) { /* ignore */ }
+        
         document.querySelectorAll('.tab').forEach(tab => {
             tab.classList.remove('active');
         });
         
         // Find and activate the corresponding tab button
         const tabButtons = document.querySelectorAll('.tab');
-        const tabMap = ['battle', 'ranking', 'history', 'achievements'];
+        const tabMap = ['home', 'battle', 'ranking', 'history', 'achievements'];
         const tabIndex = tabMap.indexOf(tabName);
         if (tabIndex >= 0 && tabButtons[tabIndex]) {
             tabButtons[tabIndex].classList.add('active');
@@ -2052,19 +4506,20 @@ const DOM = {};
             content.classList.remove('active');
         });
         document.getElementById(tabName + '-tab').classList.add('active');
-        // Hide VS divider on non-battle tabs and refresh relevant tab content
-        const vsEl = $id('vsDivider') || document.querySelector('.vs-divider');
+        // Refresh relevant tab content
         if (tabName === 'battle') {
-            // Ensure battle view is up-to-date (displayBattle will show VS if appropriate)
+            // Ensure battle view is up-to-date
             try { displayBattle(); } catch (e) {}
             // show battle UI
             try { setBattleVisibility(true); } catch (e) {}
         } else {
-            // Hide the VS badge and battle cards when not on the battle tab
-            try { setBattleVisibility(false); } catch (e) { try { if (vsEl) vsEl.style.display = 'none'; } catch (ee) {} }
+            // Hide battle cards when not on the battle tab
+            try { setBattleVisibility(false); } catch (e) {}
         }
 
-        if (tabName === 'ranking') {
+        if (tabName === 'home') {
+            displayHome();
+        } else if (tabName === 'ranking') {
             updateRanking();
         } else if (tabName === 'history') {
             displayHistory();
@@ -2075,6 +4530,9 @@ const DOM = {};
             console.log('Achievements tab has active class:', achievementsTab ? achievementsTab.classList.contains('active') : 'element not found');
             updateAchievementsTab();
         }
+        
+        // Match tab heights after switching and content is rendered
+        setTimeout(() => matchTabHeights(), 50);
     }
 
     // Render the history in the history tab
@@ -2116,19 +4574,20 @@ const DOM = {};
                 }
             }
 
-            // Apply active filter when a coaster is selected
-            if (hasSelected && typeof historyFilter !== 'undefined' && historyFilter && historyFilter !== 'all') {
+            // Apply active filter
+            if (typeof historyFilter !== 'undefined' && historyFilter && historyFilter !== 'all') {
                 const selectedName = query;
                 if (historyFilter === 'wins') {
-                    // only show battles where selectedName is the winner
-                    if (winner !== selectedName) return '';
+                    // only show battles where selectedName is the winner (requires selected coaster)
+                    if (!hasSelected || winner !== selectedName) return '';
                 } else if (historyFilter === 'losses') {
-                    // only show battles where selectedName lost
-                    if (winner === selectedName) return '';
+                    // only show battles where selectedName lost (requires selected coaster)
+                    if (!hasSelected || winner === selectedName) return '';
                     if (a !== selectedName && b !== selectedName) return '';
                 } else if (historyFilter === 'close') {
+                    // show all close fights (or only those involving selected coaster if one is selected)
                     if (!entry.closeFight) return '';
-                    if (a !== selectedName && b !== selectedName) return '';
+                    if (hasSelected && a !== selectedName && b !== selectedName) return '';
                 }
             }
 
@@ -2159,11 +4618,16 @@ const DOM = {};
         } else {
             container.innerHTML = rows;
         }
+        
+        // Match tab heights after content is rendered
+        setTimeout(() => matchTabHeights(), 50);
     }
 
     let selectedAutocompleteIndex = -1;
     // History filter state: 'all' | 'wins' | 'losses' | 'close'
     let historyFilter = 'all';
+    // Track if user actually selected a coaster (vs just typing)
+    let coasterSelected = false;
 
     function setHistoryFilter(filter) {
         if (!filter) return;
@@ -2180,21 +4644,20 @@ const DOM = {};
 
     function updateHistoryFilterUI() {
         const input = document.getElementById('historySearch');
-        const has = input && input.value && input.value.trim() !== '';
         const historyFilters = document.getElementById('historyFilters');
         if (!historyFilters) return;
-        if (has) {
+        if (coasterSelected) {
             document.body.classList.add('coaster-selected');
-            historyFilters.setAttribute('aria-hidden', 'false');
         } else {
             document.body.classList.remove('coaster-selected');
-            historyFilters.setAttribute('aria-hidden', 'true');
-            // reset to 'all' visually when nothing selected
-            historyFilter = 'all';
-            const btns = historyFilters.querySelectorAll('.filter-btn');
-            btns.forEach(b => { b.classList.remove('active'); });
-            const first = historyFilters.querySelector('.filter-btn[data-filter="all"]');
-            if (first) first.classList.add('active');
+            // reset to 'all' when no coaster selected (wins/losses won't make sense)
+            if (historyFilter === 'wins' || historyFilter === 'losses') {
+                historyFilter = 'all';
+                const btns = historyFilters.querySelectorAll('.filter-btn');
+                btns.forEach(b => { b.classList.remove('active'); });
+                const first = historyFilters.querySelector('.filter-btn[data-filter="all"]');
+                if (first) first.classList.add('active');
+            }
         }
     }
 
@@ -2208,6 +4671,7 @@ const DOM = {};
         const input = document.getElementById('historySearch');
         const clearBtn = document.getElementById('clearHistorySearchBtn');
         clearBtn.style.display = input.value.trim() ? 'block' : 'none';
+        coasterSelected = false; // Reset when typing
         showHistoryAutocomplete();
         updateHistoryFilterUI();
     }
@@ -2219,6 +4683,7 @@ const DOM = {};
         clearBtn.style.display = 'none';
         const dropdown = document.getElementById('historyAutocomplete');
         dropdown.classList.remove('show');
+        coasterSelected = false;
         displayHistory();
         updateHistoryFilterUI();
     }
@@ -2252,6 +4717,7 @@ const DOM = {};
         input.value = name;
         clearBtn.style.display = 'block';
         document.getElementById('historyAutocomplete').classList.remove('show');
+        coasterSelected = true;
         displayHistory();
         updateHistoryFilterUI();
     }
@@ -2354,27 +4820,32 @@ const DOM = {};
         entry.winner = newWinner;
         entry.loser = oldWinner;
         
-        // Update ELO ratings by reversing the previous outcome
+        // Update ratings by reversing the previous outcome
         const winnerStats = coasterStats[oldWinner];
         const loserStats = coasterStats[newWinner];
         
         if (winnerStats && loserStats && entry.statsA && entry.statsB) {
-            console.log('Current ELO before restoration:', {
-                [oldWinner]: winnerStats.elo,
-                [newWinner]: loserStats.elo
+            console.log('Current rating before restoration:', {
+                [oldWinner]: winnerStats.rating,
+                [newWinner]: loserStats.rating
             });
             
-            // Restore ELO to BEFORE this battle happened (to avoid compounding errors)
+            // Restore rating to BEFORE this battle happened (to avoid compounding errors)
             const aStats = coasterStats[entry.a];
             const bStats = coasterStats[entry.b];
             
             if (aStats && bStats) {
-                aStats.elo = entry.statsA.eloBefore;
-                bStats.elo = entry.statsB.eloBefore;
+                // Restore from stored battle stats (support both old ELO and new Glicko-2)
+                aStats.rating = entry.statsA.ratingBefore || entry.statsA.eloBefore || aStats.rating;
+                aStats.rd = entry.statsA.rdBefore || GLICKO2_RD_INITIAL;
+                aStats.volatility = entry.statsA.volatilityBefore || GLICKO2_VOLATILITY_INITIAL;
+                bStats.rating = entry.statsB.ratingBefore || entry.statsB.eloBefore || bStats.rating;
+                bStats.rd = entry.statsB.rdBefore || GLICKO2_RD_INITIAL;
+                bStats.volatility = entry.statsB.volatilityBefore || GLICKO2_VOLATILITY_INITIAL;
                 
-                console.log('Restored ELO to pre-battle state:', {
-                    [entry.a]: aStats.elo,
-                    [entry.b]: bStats.elo
+                console.log('Restored rating to pre-battle state:', {
+                    [entry.a]: aStats.rating,
+                    [entry.b]: bStats.rating
                 });
             }
             
@@ -2396,21 +4867,24 @@ const DOM = {};
                 [newWinner]: { wins: loserStats.wins, losses: loserStats.losses }
             });
             
-            // Now recalculate ELO from the original before-battle state with new winner
+            // Now recalculate rating from the original before-battle state with new winner
             const newWinnerStats = coasterStats[newWinner];
             const oldWinnerStats = coasterStats[oldWinner];
             
-            const eloOutcome = calculateEloAdaptiveFromStats(newWinnerStats, oldWinnerStats);
-            const { newWinnerElo, newLoserElo, K } = eloOutcome;
+            const glickoOutcome = calculateGlicko2(newWinnerStats, oldWinnerStats);
+            const { newWinnerRating, newWinnerRD, newWinnerVolatility, newLoserRating, newLoserRD, newLoserVolatility } = glickoOutcome;
             
-            console.log('Recalculated ELO:', {
-                kFactor: K,
-                [newWinner]: `${newWinnerStats.elo} → ${newWinnerElo}`,
-                [oldWinner]: `${oldWinnerStats.elo} → ${newLoserElo}`
+            console.log('Recalculated rating:', {
+                [newWinner]: `${newWinnerStats.rating} → ${newWinnerRating}`,
+                [oldWinner]: `${oldWinnerStats.rating} → ${newLoserRating}`
             });
             
-            newWinnerStats.elo = newWinnerElo;
-            oldWinnerStats.elo = newLoserElo;
+            newWinnerStats.rating = newWinnerRating;
+            newWinnerStats.rd = newWinnerRD;
+            newWinnerStats.volatility = newWinnerVolatility;
+            oldWinnerStats.rating = newLoserRating;
+            oldWinnerStats.rd = newLoserRD;
+            oldWinnerStats.volatility = newLoserVolatility;
             
             // Update comprehensive battle stats if they exist
             if (entry.statsA && entry.statsB) {
@@ -2433,26 +4907,34 @@ const DOM = {};
                 
                 if (isAtheNewWinner) {
                     // A is now winner, B is now loser - update their after-battle values
-                    entry.statsA.eloAfter = newWinnerStats.elo;
+                    entry.statsA.ratingAfter = newWinnerStats.rating;
+                    entry.statsA.rdAfter = newWinnerStats.rd;
+                    entry.statsA.volatilityAfter = newWinnerStats.volatility;
                     entry.statsA.rankAfter = newWinnerRankAfter;
                     // Swap: A's new potentialGain/Loss comes from B's old values
                     entry.statsA.potentialGain = origStatsB.potentialGain;
                     entry.statsA.potentialLoss = origStatsB.potentialLoss;
                     
-                    entry.statsB.eloAfter = oldWinnerStats.elo;
+                    entry.statsB.ratingAfter = oldWinnerStats.rating;
+                    entry.statsB.rdAfter = oldWinnerStats.rd;
+                    entry.statsB.volatilityAfter = oldWinnerStats.volatility;
                     entry.statsB.rankAfter = oldWinnerRankAfter;
                     // Swap: B's new potentialGain/Loss comes from A's old values
                     entry.statsB.potentialGain = origStatsA.potentialGain;
                     entry.statsB.potentialLoss = origStatsA.potentialLoss;
                 } else {
                     // B is now winner, A is now loser
-                    entry.statsB.eloAfter = newWinnerStats.elo;
+                    entry.statsB.ratingAfter = newWinnerStats.rating;
+                    entry.statsB.rdAfter = newWinnerStats.rd;
+                    entry.statsB.volatilityAfter = newWinnerStats.volatility;
                     entry.statsB.rankAfter = newWinnerRankAfter;
                     // Swap: B's new potentialGain/Loss comes from A's old values
                     entry.statsB.potentialGain = origStatsA.potentialGain;
                     entry.statsB.potentialLoss = origStatsA.potentialLoss;
                     
-                    entry.statsA.eloAfter = oldWinnerStats.elo;
+                    entry.statsA.ratingAfter = oldWinnerStats.rating;
+                    entry.statsA.rdAfter = oldWinnerStats.rd;
+                    entry.statsA.volatilityAfter = oldWinnerStats.volatility;
                     entry.statsA.rankAfter = oldWinnerRankAfter;
                     // Swap: A's new potentialGain/Loss comes from B's old values
                     entry.statsA.potentialGain = origStatsB.potentialGain;
@@ -2462,14 +4944,14 @@ const DOM = {};
                 console.log('Updated battle stats:', {
                     statsA: {
                         name: entry.a,
-                        eloAfter: entry.statsA.eloAfter,
+                        ratingAfter: entry.statsA.ratingAfter,
                         rankAfter: entry.statsA.rankAfter,
                         potentialGain: entry.statsA.potentialGain,
                         potentialLoss: entry.statsA.potentialLoss
                     },
                     statsB: {
                         name: entry.b,
-                        eloAfter: entry.statsB.eloAfter,
+                        ratingAfter: entry.statsB.ratingAfter,
                         rankAfter: entry.statsB.rankAfter,
                         potentialGain: entry.statsB.potentialGain,
                         potentialLoss: entry.statsB.potentialLoss
@@ -2613,74 +5095,90 @@ const DOM = {};
                     continue;
                 }
                 
-                // Step A: Restore ELO to BEFORE this battle by reversing the old outcome
-                // Get the old potential gains/losses from stored stats
-                const winnerOldPotentialGain = entry.statsA && entry.a === winner ? entry.statsA.potentialGain : 
-                                              entry.statsB && entry.b === winner ? entry.statsB.potentialGain : 0;
-                const loserOldPotentialLoss = entry.statsA && entry.a === loser ? entry.statsA.potentialLoss : 
-                                              entry.statsB && entry.b === loser ? entry.statsB.potentialLoss : 0;
+                // Step A: Restore rating/RD/volatility to BEFORE this battle by using stored values
+                // Support backward compatibility: check both old (eloBefore) and new (ratingBefore) fields
+                const winnerRatingBefore = entry.statsA && entry.a === winner ? 
+                                          (entry.statsA.ratingBefore !== undefined ? entry.statsA.ratingBefore : entry.statsA.eloBefore) :
+                                          entry.statsB && entry.b === winner ?
+                                          (entry.statsB.ratingBefore !== undefined ? entry.statsB.ratingBefore : entry.statsB.eloBefore) :
+                                          winnerStats.rating;
+                const loserRatingBefore = entry.statsA && entry.a === loser ?
+                                         (entry.statsA.ratingBefore !== undefined ? entry.statsA.ratingBefore : entry.statsA.eloBefore) :
+                                         entry.statsB && entry.b === loser ?
+                                         (entry.statsB.ratingBefore !== undefined ? entry.statsB.ratingBefore : entry.statsB.eloBefore) :
+                                         loserStats.rating;
                 
-                // Reverse the old ELO changes to get eloBefore
-                const winnerEloBefore = winnerStats.elo - winnerOldPotentialGain;
-                const loserEloBefore = loserStats.elo - loserOldPotentialLoss;
+                const winnerRdBefore = entry.statsA && entry.a === winner ? 
+                                      (entry.statsA.rdBefore || GLICKO2_RD_INITIAL) :
+                                      entry.statsB && entry.b === winner ?
+                                      (entry.statsB.rdBefore || GLICKO2_RD_INITIAL) :
+                                      winnerStats.rd;
+                const loserRdBefore = entry.statsA && entry.a === loser ?
+                                     (entry.statsA.rdBefore || GLICKO2_RD_INITIAL) :
+                                     entry.statsB && entry.b === loser ?
+                                     (entry.statsB.rdBefore || GLICKO2_RD_INITIAL) :
+                                     loserStats.rd;
                 
-                // Get current battle counts (this represents how many battles they had BEFORE this one)
-                const winnerBattlesBefore = entry.statsA && entry.a === winner ? entry.statsA.totalBattlesBefore : 
-                                           entry.statsB && entry.b === winner ? entry.statsB.totalBattlesBefore : 
-                                           winnerStats.battles - 1;
-                const loserBattlesBefore = entry.statsA && entry.a === loser ? entry.statsA.totalBattlesBefore : 
-                                          entry.statsB && entry.b === loser ? entry.statsB.totalBattlesBefore : 
-                                          loserStats.battles - 1;
+                const winnerVolatilityBefore = entry.statsA && entry.a === winner ?
+                                              (entry.statsA.volatilityBefore || GLICKO2_VOLATILITY_INITIAL) :
+                                              entry.statsB && entry.b === winner ?
+                                              (entry.statsB.volatilityBefore || GLICKO2_VOLATILITY_INITIAL) :
+                                              winnerStats.volatility;
+                const loserVolatilityBefore = entry.statsA && entry.a === loser ?
+                                             (entry.statsA.volatilityBefore || GLICKO2_VOLATILITY_INITIAL) :
+                                             entry.statsB && entry.b === loser ?
+                                             (entry.statsB.volatilityBefore || GLICKO2_VOLATILITY_INITIAL) :
+                                             loserStats.volatility;
                 
-                // Calculate K-factors based on battles at that time
-                const winnerK = computeAdaptiveK(winnerBattlesBefore);
-                const loserK = computeAdaptiveK(loserBattlesBefore);
-                const K = Math.max(winnerK, loserK);
+                // Recalculate using Glicko-2
+                const result = calculateGlicko2(
+                    winnerRatingBefore, winnerRdBefore, winnerVolatilityBefore,
+                    loserRatingBefore, loserRdBefore, loserVolatilityBefore,
+                    1.0 // winner wins
+                );
                 
-                // Calculate expected probabilities with the restored eloBefore values
-                const expectedWinner = 1 / (1 + Math.pow(10, (loserEloBefore - winnerEloBefore) / 400));
-                const expectedLoser = 1 - expectedWinner;
-                
-                // Calculate new ELO with current K-factors
-                const newWinnerElo = winnerEloBefore + K * (1 - expectedWinner);
-                const newLoserElo = loserEloBefore + K * (0 - expectedLoser);
-                
-                // Apply new ELO
-                winnerStats.elo = newWinnerElo;
-                loserStats.elo = newLoserElo;
-                
-                // Update the global ELO state for subsequent battles
-                // This ensures the next battle uses the recalculated values
+                // Apply new ratings
+                winnerStats.rating = result.rating1;
+                winnerStats.rd = result.rd1;
+                winnerStats.volatility = result.volatility1;
+                loserStats.rating = result.rating2;
+                loserStats.rd = result.rd2;
+                loserStats.volatility = result.volatility2;
                 
                 // Get new ranks
                 const winnerRankAfter = getCoasterRank(winner);
                 const loserRankAfter = getCoasterRank(loser);
                 
                 // Calculate potential gains/losses (needed for logging and stats update)
-                const winnerPotentialGain = newWinnerElo - winnerEloBefore;
-                const loserPotentialLoss = newLoserElo - loserEloBefore;
+                const winnerPotentialGain = result.rating1 - winnerRatingBefore;
+                const loserPotentialLoss = result.rating2 - loserRatingBefore;
                 
                 // Calculate what would have happened if outcome was reversed
-                const loserIfWinElo = loserEloBefore + K * (1 - expectedLoser);
-                const winnerIfLoseElo = winnerEloBefore + K * (0 - expectedWinner);
-                const loserPotentialGain = loserIfWinElo - loserEloBefore;
-                const winnerPotentialLoss = winnerIfLoseElo - winnerEloBefore;
+                const reversedResult = calculateGlicko2(
+                    winnerRatingBefore, winnerRdBefore, winnerVolatilityBefore,
+                    loserRatingBefore, loserRdBefore, loserVolatilityBefore,
+                    0.0 // winner loses
+                );
+                const winnerPotentialLoss = reversedResult.rating1 - winnerRatingBefore;
+                const loserPotentialGain = reversedResult.rating2 - loserRatingBefore;
                 
-                // Update battle stats in history if they exist
+                // Update battle stats in history
                 if (entry.statsA && entry.statsB) {
-                    const isAWinner = (entry.a === winner);
+                    // Update ratingBefore/rdBefore/volatilityBefore with the restored values
+                    entry.statsA.ratingBefore = (entry.a === winner) ? winnerRatingBefore : loserRatingBefore;
+                    entry.statsB.ratingBefore = (entry.b === winner) ? winnerRatingBefore : loserRatingBefore;
+                    entry.statsA.rdBefore = (entry.a === winner) ? winnerRdBefore : loserRdBefore;
+                    entry.statsB.rdBefore = (entry.b === winner) ? winnerRdBefore : loserRdBefore;
+                    entry.statsA.volatilityBefore = (entry.a === winner) ? winnerVolatilityBefore : loserVolatilityBefore;
+                    entry.statsB.volatilityBefore = (entry.b === winner) ? winnerVolatilityBefore : loserVolatilityBefore;
                     
-                    // Update eloBefore with the restored values
-                    entry.statsA.eloBefore = (entry.a === winner) ? winnerEloBefore : loserEloBefore;
-                    entry.statsB.eloBefore = (entry.b === winner) ? winnerEloBefore : loserEloBefore;
-                    
-                    // Update eloAfter with recalculated values
-                    entry.statsA.eloAfter = (entry.a === winner) ? newWinnerElo : newLoserElo;
-                    entry.statsB.eloAfter = (entry.b === winner) ? newWinnerElo : newLoserElo;
-                    
-                    // Update K-factor
-                    entry.statsA.kFactor = K;
-                    entry.statsB.kFactor = K;
+                    // Update ratingAfter/rdAfter/volatilityAfter with recalculated values
+                    entry.statsA.ratingAfter = (entry.a === winner) ? result.rating1 : result.rating2;
+                    entry.statsB.ratingAfter = (entry.b === winner) ? result.rating1 : result.rating2;
+                    entry.statsA.rdAfter = (entry.a === winner) ? result.rd1 : result.rd2;
+                    entry.statsB.rdAfter = (entry.b === winner) ? result.rd1 : result.rd2;
+                    entry.statsA.volatilityAfter = (entry.a === winner) ? result.volatility1 : result.volatility2;
+                    entry.statsB.volatilityAfter = (entry.b === winner) ? result.volatility1 : result.volatility2;
                     
                     // Update ranks
                     entry.statsA.rankAfter = (entry.a === winner) ? winnerRankAfter : loserRankAfter;
@@ -2691,6 +5189,10 @@ const DOM = {};
                     entry.statsA.potentialLoss = (entry.a === winner) ? winnerPotentialLoss : loserPotentialLoss;
                     entry.statsB.potentialGain = (entry.b === winner) ? winnerPotentialGain : loserPotentialGain;
                     entry.statsB.potentialLoss = (entry.b === winner) ? winnerPotentialLoss : loserPotentialLoss;
+                    
+                    // Store expected win probabilities
+                    entry.statsA.expectedWinProbability = (entry.a === winner) ? result.expectedScore1 : (1 - result.expectedScore1);
+                    entry.statsB.expectedWinProbability = (entry.b === winner) ? result.expectedScore1 : (1 - result.expectedScore1);
                 }
                 
                 // Update progress every 50 battles
@@ -2783,7 +5285,6 @@ const DOM = {};
         const totalBattles = totalBattlesCount;
         const avgBattles = totalBattles > 0 ? (totalBattles * 2 / totalCoasters).toFixed(1) : 0;
         
-        // Calculate progression
         const totalPossible = getTotalPossiblePairs();
         const completed = completedPairs.size;
         const progressPercentage = totalPossible > 0 ? ((completed / totalPossible) * 100).toFixed(1) : 0;
@@ -2816,9 +5317,10 @@ const DOM = {};
                     aVal = a.manufacturer;
                     bVal = b.manufacturer;
                     break;
+                case 'rating':
                 case 'elo':
-                    aVal = displayedElo(a);
-                    bVal = displayedElo(b);
+                    aVal = displayedRating(a);
+                    bVal = displayedRating(b);
                     break;
                 case 'battles':
                     aVal = a.battles;
@@ -2837,8 +5339,8 @@ const DOM = {};
                     bVal = b.battles > 0 ? (b.wins / b.battles) : 0;
                     break;
                 default:
-                    aVal = a.elo;
-                    bVal = b.elo;
+                    aVal = a.rating;
+                    bVal = b.rating;
             }
             
             if (typeof aVal === 'string') {
@@ -2852,14 +5354,14 @@ const DOM = {};
             const text = th.textContent.replace(' ⬆️', '').replace(' ⬇️', '');
             th.textContent = text;
         });
-        
-        const activeHeader = Array.from(document.querySelectorAll('.ranking-table th'))
-            .find(th => th.textContent.toLowerCase().includes(currentSort.column) || 
-                        (currentSort.column === 'elo' && th.textContent.includes('ELO')));
-        
-        if (activeHeader) {
-            const text = activeHeader.textContent.replace(' ⬆️', '').replace(' ⬇️', '');
-            activeHeader.textContent = text + (currentSort.ascending ? ' ⬆️' : ' ⬇️');
+        // Only add arrow for columns except 'rating'
+        if (currentSort.column !== 'rating' && currentSort.column !== 'elo') {
+            const activeHeader = Array.from(document.querySelectorAll('.ranking-table th'))
+                .find(th => th.textContent.toLowerCase().includes(currentSort.column));
+            if (activeHeader) {
+                const text = activeHeader.textContent.replace(' ⬆️', '').replace(' ⬇️', '');
+                activeHeader.textContent = text + (currentSort.ascending ? ' ⬆️' : ' ⬇️');
+            }
         }
         
         const tbody = document.getElementById('rankingBody');
@@ -2899,7 +5401,7 @@ const DOM = {};
                         <td><strong>${coaster.name}</strong></td>
                         <td>${coaster.park}</td>
                         <td>${coaster.manufacturer}</td>
-                        <td><span class="elo-score">${Math.round(displayedElo(coaster))}</span></td>
+                        <td><span class="elo-score">${Math.round(displayedRating(coaster))} ± ${Math.round(coaster.rd)}</span></td>
                         <td><span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.battles}</span></td>
                         <td><span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.wins}</span></td>
                         <td><span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.losses}</span></td>
@@ -2916,7 +5418,7 @@ const DOM = {};
                         <div class="meta">${coaster.park} • ${coaster.manufacturer} • <span class="clickable-stat" onclick="viewCoasterHistory('${escapedName}')" title="View battle history">${coaster.wins}-${coaster.losses}</span></div>
                     </div>
                     <div class="ranking-right">
-                            <div class="elo">${Math.round(displayedElo(coaster))}</div>
+                            <div class="elo">${Math.round(displayedRating(coaster))}</div>
                         </div>
                 </div>
             `);
@@ -2924,6 +5426,9 @@ const DOM = {};
 
         tbody.innerHTML = rowsHtml.join('');
         rankingCardsContainer.innerHTML = cardsHtml.join('');
+        
+        // Match tab heights after content is rendered
+        setTimeout(() => matchTabHeights(), 50);
     }
 
     function filterRanking() {
@@ -2946,46 +5451,93 @@ const DOM = {};
         historySearch.value = coasterName;
         clearBtn.style.display = 'block';
         
+        // Mark as selected
+        coasterSelected = true;
+        
         // Trigger the search/filter
         displayHistory();
         updateHistoryFilterUI();
     }
 
-    function resetRankings() {
+    function resetRankingOnly() {
         if (!currentUser) return;
         
-        if (confirm(`Are you sure you want to reset all data for ${currentUser === 'luca' ? 'Luca' : 'Wouter'}? This cannot be undone!`)) {
-            if (confirm('Last warning! All battles and rankings will be deleted. Continue?')) {
-                coasterStats = initializeStats();
-                totalBattlesCount = 0;
-                coasterHistory = [];
-                completedPairs = new Set();
-                
-                // Reset achievements
-                if (typeof achievementManager !== 'undefined') {
-                    achievementManager.unlockedAchievements.clear();
-                    achievementManager.leftStreak = 0;
-                    achievementManager.rightStreak = 0;
-                    achievementManager.perfectMatches = 0;
-                    achievementManager.closeFights = 0;
-                    achievementManager.sessionBattles = 0;
-                    achievementManager.lastBattleDate = null;
-                    achievementManager.consecutiveDays = 0;
-                    achievementManager.dailyBattleDates = new Set();
-                    achievementManager.save(currentUser);
-                    
-                    // Clear localStorage for achievements
-                    localStorage.removeItem(`achievements_${currentUser}`);
-                    localStorage.removeItem(`achievementStats_${currentUser}`);
-                }
-                
-                saveData();
-                displayBattle();
-                updateRanking();
-                updateAchievementsTab();
-                alert('Alle data is gereset! 🔄');
-            }
+        // Show custom modal for ranking reset
+        const modal = document.getElementById('resetRankingModal');
+        const userName = currentUser === 'luca' ? 'Luca' : 'Wouter';
+        document.getElementById('resetRankingUserName').textContent = userName;
+        modal.classList.add('show');
+    }
+
+    function closeResetRankingModal() {
+        const modal = document.getElementById('resetRankingModal');
+        modal.classList.remove('show');
+    }
+
+    function confirmResetRanking() {
+        closeResetRankingModal();
+        
+        // Reset only ranking and battle history, preserve achievements
+        coasterStats = initializeStats();
+        totalBattlesCount = 0;
+        coasterHistory = [];
+        completedPairs = new Set();
+        
+        // DO NOT reset achievements - they are preserved
+        
+        saveData();
+        displayBattle();
+        updateRanking();
+        alert('Ranking is gereset! Achievements zijn behouden. 🔄');
+    }
+
+    function resetAllData() {
+        if (!currentUser) return;
+        
+        // Show custom modal for full reset
+        const modal = document.getElementById('resetModal');
+        const userName = currentUser === 'luca' ? 'Luca' : 'Wouter';
+        document.getElementById('resetUserName').textContent = userName;
+        modal.classList.add('show');
+    }
+
+    function closeResetModal() {
+        const modal = document.getElementById('resetModal');
+        modal.classList.remove('show');
+    }
+
+    function confirmReset() {
+        closeResetModal();
+        
+        // Perform the full reset
+        coasterStats = initializeStats();
+        totalBattlesCount = 0;
+        coasterHistory = [];
+        completedPairs = new Set();
+        
+        // Reset achievements
+        if (typeof achievementManager !== 'undefined') {
+            achievementManager.unlockedAchievements.clear();
+            achievementManager.leftStreak = 0;
+            achievementManager.rightStreak = 0;
+            achievementManager.perfectMatches = 0;
+            achievementManager.closeFights = 0;
+            achievementManager.sessionBattles = 0;
+            achievementManager.lastBattleDate = null;
+            achievementManager.consecutiveDays = 0;
+            achievementManager.dailyBattleDates = new Set();
+            achievementManager.save(currentUser);
+            
+            // Clear localStorage for achievements
+            localStorage.removeItem(`achievements_${currentUser}`);
+            localStorage.removeItem(`achievementStats_${currentUser}`);
         }
+        
+        saveData();
+        displayBattle();
+        updateRanking();
+        updateAchievementsTab();
+        alert('Alle data is gereset! 🔄');
     }
 
     // Save user preference when switching (wrap original function)
@@ -3007,12 +5559,12 @@ function downloadRankingCSV() {
         return;
     }
     
-    // Sort by ELO (same as default ranking view)
+    // Sort by rating (same as default ranking view)
     const statsArray = Object.values(coasterStats);
-    const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
+    const sorted = [...statsArray].sort((a, b) => b.rating - a.rating);
     
     // Create CSV header
-    let csv = 'Rank,Naam,Park,Fabrikant,ELO,Battles,Wins,Losses,Win%\n';
+    let csv = 'Rank,Naam,Park,Fabrikant,Rating,RD,Volatility,Battles,Wins,Losses,Win%\n';
     
     // Add data rows
     sorted.forEach((coaster, index) => {
@@ -3028,7 +5580,7 @@ function downloadRankingCSV() {
             return text;
         };
         
-        csv += `${rank},${escapeCsv(coaster.name)},${escapeCsv(coaster.park)},${escapeCsv(coaster.manufacturer)},${Math.round(coaster.elo)},${coaster.battles},${coaster.wins},${coaster.losses},${winrate}\n`;
+        csv += `${rank},${escapeCsv(coaster.name)},${escapeCsv(coaster.park)},${escapeCsv(coaster.manufacturer)},${Math.round(coaster.rating)},${Math.round(coaster.rd)},${coaster.volatility.toFixed(6)},${coaster.battles},${coaster.wins},${coaster.losses},${winrate}\n`;
     });
     
     // Create download
@@ -3055,7 +5607,7 @@ function getGameStats() {
     const statsArray = Object.values(coasterStats);
     
     // Check if any coaster is ranked #1
-    const sorted = [...statsArray].sort((a, b) => b.elo - a.elo);
+    const sorted = [...statsArray].sort((a, b) => b.rating - a.rating);
     const hasTopRankedCoaster = sorted.length > 0;
     
     // Check if all coasters have minimum battles
@@ -3074,6 +5626,8 @@ function getGameStats() {
         totalBattles: totalBattlesCount,
         sessionBattles: achievementManager.sessionBattles,
         closeFights: achievementManager.closeFights,
+        underdogWins: achievementManager.underdogWins,
+        underdogWinStreak: achievementManager.underdogWinStreak,
         hasTopRankedCoaster,
         allCoastersMinBattles,
         allPairsCompleted,
@@ -3142,6 +5696,10 @@ function updateAchievementsTab() {
     if (progressBar) progressBar.style.width = `${percentage}%`;
     if (tabCounter) tabCounter.textContent = `${unlockedCount}/${totalCount}`;
     
+    // Update filter counter
+    const filterCounter = document.getElementById('achievementFilterCounter');
+    if (filterCounter) filterCounter.textContent = `${unlockedCount}/${totalCount} unlocked`;
+    
     // Render achievement cards
     grid.innerHTML = achievements.map(achievement => {
         const lockedClass = achievement.unlocked ? 'unlocked' : 'locked';
@@ -3197,4 +5755,7 @@ function filterAchievements(category) {
             card.style.display = hasCategory ? '' : 'none';
         }
     });
+    
+    // Match tab heights after filtering
+    setTimeout(() => matchTabHeights(), 50);
 }
